@@ -91,8 +91,6 @@ class MIDSdataset(InMemoryDataset):
         self.feature_functions = {
             "degree": G.degree,
             "degree_centrality": nx.degree_centrality(G),
-            "betweenness_centrality": nx.betweenness_centrality(G),
-            "disjunction_value": utils.disjunction_value(G),
             "random": nx.random_layout(G, seed=np.random),
             "avg_neighbor_degree": nx.average_neighbor_degree(G),
             "closeness_centrality": nx.closeness_centrality(G),
@@ -127,8 +125,8 @@ class MIDSdataset(InMemoryDataset):
         #     data.append(torch_G.clone())
         #     data[-1].y = labels
 
-        torch_G.y = torch.cat(true_labels)
-        #torch_G.y = true_labels[-1]
+        #torch_G.y = torch.cat(true_labels) # all solutions
+        torch_G.y = true_labels[-1] # one solution
 
         return torch_G
 
@@ -168,15 +166,15 @@ def inspect_dataset(dataset, num_graphs=1):
 
 def main():
     root = Path(__file__).parent / "Dataset"
-    selected_graph_sizes = {#3:  -1,
-                            #4:  -1,
-                            #5:  -1,
-                            #6:  -1,
-                            #7:  -1,
-                            #8:  -1,
-                            #9:  30000,
+    selected_graph_sizes = {3:  -1,
+                            4:  -1,
+                            5:  -1,
+                            6:  -1,
+                            7:  -1,
+                            8:  -1,
+                            9:  30000,
                             #10: 10000,
-                            15: 10000,
+                            #15: 10000,
                             #20: 10000,
                             #30: 10000,
                             #40: 10000,
