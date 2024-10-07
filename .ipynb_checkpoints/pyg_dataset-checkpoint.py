@@ -11,6 +11,7 @@ import yaml
 from matplotlib import pyplot as plt
 from torch_geometric.data import InMemoryDataset, download_url, extract_zip
 import numpy as np
+from line_profiler import profile
 
 from my_graphs_dataset import GraphDataset
 
@@ -84,12 +85,10 @@ class MIDSdataset(InMemoryDataset):
 
         #data, slices = self.collate(data_list)
         self.save(data_list, self.processed_paths[0])
-
-    def make_data(self, G):
-        """Create a PyG data object from a graph object."""
-
-        # Define features in use.
-        feature_functions = {
+        
+    @profile
+    def make_features(self, G):
+        self.feature_functions = {
             "degree": G.degree,
             "degree_centrality": nx.degree_centrality(G),
             "betweenness_centrality": nx.betweenness_centrality(G),
@@ -98,11 +97,17 @@ class MIDSdataset(InMemoryDataset):
             "avg_neighbor_degree": nx.average_neighbor_degree(G),
             "closeness_centrality": nx.closeness_centrality(G),
         }
+    
+    def make_data(self, G):
+        """Create a PyG data object from a graph object."""
+        
+        # Define features in use.
+        self.make_features(G)
 
         # Compute and add features to the nodes in the graph.
         for node in G.nodes():
-            for feature in feature_functions:
-                G.nodes[node][feature] = feature_functions[feature][node]
+            for feature in self.feature_functions:
+                G.nodes[node][feature] = self.feature_functions[feature][node]
 
         # for node in G.nodes():
         #     G.nodes[node]["degree"] = G.degree(node)
@@ -115,7 +120,7 @@ class MIDSdataset(InMemoryDataset):
         # for node in G.nodes():
         #     G.nodes[node]["betweenness_centrality"] = between_cent[node]
 
-        torch_G = pygUtils.from_networkx(G, group_node_attrs=list(feature_functions.keys()))
+        torch_G = pygUtils.from_networkx(G, group_node_attrs=list(self.feature_functions.keys()))
         true_labels = MIDSdataset.get_labels(utils.find_MIDS(G), G.number_of_nodes())
         # data = []
         # for labels in true_labels:
@@ -123,6 +128,7 @@ class MIDSdataset(InMemoryDataset):
         #     data[-1].y = labels
 
         torch_G.y = torch.cat(true_labels)
+        #torch_G.y = true_labels[-1]
 
         return torch_G
 
@@ -162,14 +168,19 @@ def inspect_dataset(dataset, num_graphs=1):
 
 def main():
     root = Path(__file__).parent / "Dataset"
-    selected_graph_sizes = {3:  -1,
-                            4:  -1,
-                            5:  -1,
-                            6:  -1,
-                            7:  -1,
-                            8:  -1,
-                            9:  100,
-                            10: 100}
+    selected_graph_sizes = {#3:  -1,
+                            #4:  -1,
+                            #5:  -1,
+                            #6:  -1,
+                            #7:  -1,
+                            #8:  -1,
+                            #9:  30000,
+                            #10: 10000,
+                            15: 10000,
+                            #20: 10000,
+                            #30: 10000,
+                            #40: 10000,
+                           }
     loader = GraphDataset(selection=selected_graph_sizes)
 
     with codetiming.Timer():
