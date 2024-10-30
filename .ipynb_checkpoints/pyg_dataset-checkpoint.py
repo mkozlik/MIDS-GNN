@@ -94,6 +94,7 @@ class MIDSdataset(InMemoryDataset):
             "random": nx.random_layout(G, seed=np.random),
             "avg_neighbor_degree": nx.average_neighbor_degree(G),
             "closeness_centrality": nx.closeness_centrality(G),
+            "number_of_nodes": [nx.number_of_nodes(G)] * nx.number_of_nodes(G)
         }
     
     def make_data(self, G):
@@ -166,16 +167,16 @@ def inspect_dataset(dataset, num_graphs=1):
 
 def main():
     root = Path(__file__).parent / "Dataset"
-    selected_graph_sizes = {3:  -1,
-                            4:  -1,
-                            5:  -1,
-                            6:  -1,
-                            7:  -1,
-                            8:  -1,
-                            9:  30000,
-                            #10: 10000,
+    selected_graph_sizes = {#3:  -1,
+                            #4:  -1,
+                            #5:  -1,
+                            #6:  -1,
+                            #7:  -1,
+                            #8:  -1,
+                            #9:  10000,
+                            10: 2000,
                             #15: 10000,
-                            #20: 10000,
+                            20: 2000,
                             #30: 10000,
                             #40: 10000,
                            }
