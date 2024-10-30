@@ -121,13 +121,21 @@ class MIDSdataset(InMemoryDataset):
 
         torch_G = pygUtils.from_networkx(G, group_node_attrs=list(self.feature_functions.keys()))
         true_labels = MIDSdataset.get_labels(utils.find_MIDS(G), G.number_of_nodes())
-        # data = []
-        # for labels in true_labels:
-        #     data.append(torch_G.clone())
-        #     data[-1].y = labels
-
+        data = torch.zeros(len(true_labels[0]))
+        count = 0
+        #print(true_labels)
+        for labels in true_labels:
+            #data.append(torch_G.clone())
+            data = torch.add(data, labels)
+            count += 1
+            
+            #data[-1].y = labels
+        #print(data)
         #torch_G.y = torch.cat(true_labels) # all solutions
-        torch_G.y = true_labels[-1] # one solution
+        #torch_G.y = true_labels[-1] # one solution
+
+        #data[:] = [x / len(true_labels) for x in data] 
+        torch_G.y = torch.div(data,count)#/len(true_labels) # scaled all solutions into one
 
         return torch_G
 
@@ -167,18 +175,21 @@ def inspect_dataset(dataset, num_graphs=1):
 
 def main():
     root = Path(__file__).parent / "Dataset"
-    selected_graph_sizes = {#3:  -1,
-                            #4:  -1,
-                            #5:  -1,
-                            #6:  -1,
-                            #7:  -1,
-                            #8:  -1,
-                            #9:  10000,
-                            10: 2000,
-                            #15: 10000,
-                            20: 2000,
+    selected_graph_sizes = {#3: -1,
+                            #4: -1,
+                            #5: -1,
+                            #6: -1,
+                            #7: -1,
+                            8: -1,
+                            9:  10000,
+                            #10: 1000,
+                            #11: 1000,
+                            #12: 1000,
+                            #13: 1000,
+                            #14: 1000,
+                            #15: 1000,
+                            #20: 2000,
                             #30: 10000,
-                            #40: 10000,
                            }
     loader = GraphDataset(selection=selected_graph_sizes)
 
