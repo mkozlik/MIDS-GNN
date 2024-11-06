@@ -1,19 +1,20 @@
+import base64
+import hashlib
+import json
 import random
 from pathlib import Path
 
 import codetiming
 import matplotlib
 import networkx as nx
+import numpy as np
 import torch
 import torch_geometric.utils as pygUtils
 import Utilities.utils as utils
 import yaml
 from matplotlib import pyplot as plt
-from torch_geometric.data import InMemoryDataset, download_url, extract_zip
-import numpy as np
-from line_profiler import profile
-
 from my_graphs_dataset import GraphDataset
+from torch_geometric.data import InMemoryDataset, download_url, extract_zip
 
 
 class MIDSdataset(InMemoryDataset):
@@ -54,12 +55,11 @@ class MIDSdataset(InMemoryDataset):
         That means that if you want to reprocess the data, you need to delete
         the processed files and reimport the dataset.
         """
-        # TODO: Automatically detect changes in the dataset.
-        #       We could come up with a namig scheme that will differentiate
-        #       which graph families (and/or sizes) and features were used to
-        #       generate the dataset. This way, we could detect changes and
-        #       reprocess the dataset when needed.
-        return ["data.pt"]
+        dataset_props = json.dumps([self.loader.selection, self.features])
+        sha256_hash = hashlib.sha256(dataset_props.encode("utf-8")).digest()
+        hash_string = base64.urlsafe_b64encode(sha256_hash).decode("utf-8")[:10]
+
+        return [f"data_{hash_string}.pt"]
 
     def download(self):
         """Automatically download raw files if missing."""
@@ -85,39 +85,26 @@ class MIDSdataset(InMemoryDataset):
 
         #data, slices = self.collate(data_list)
         self.save(data_list, self.processed_paths[0])
-        
-    @profile
-    def make_features(self, G):
-        self.feature_functions = {
-            "degree": G.degree,
-            "degree_centrality": nx.degree_centrality(G),
-            "random": nx.random_layout(G, seed=np.random),
-            "avg_neighbor_degree": nx.average_neighbor_degree(G),
-            "closeness_centrality": nx.closeness_centrality(G),
-            "number_of_nodes": [nx.number_of_nodes(G)] * nx.number_of_nodes(G)
-        }
-    
+
+    # Define features in use.
+    feature_functions = {
+        "degree": lambda g: {n: float(g.degree(n)) for n in g.nodes()},
+        "degree_centrality": nx.degree_centrality,
+        "random": lambda g: nx.random_layout(g, seed=np.random),
+        "avg_neighbor_degree": nx.average_neighbor_degree,
+        "closeness_centrality": nx.closeness_centrality,
+        "number_of_nodes": lambda g: [nx.number_of_nodes(g)] * nx.number_of_nodes(g)
+    }
+
     def make_data(self, G):
         """Create a PyG data object from a graph object."""
-        
-        # Define features in use.
-        self.make_features(G)
 
         # Compute and add features to the nodes in the graph.
-        for node in G.nodes():
-            for feature in self.feature_functions:
-                G.nodes[node][feature] = self.feature_functions[feature][node]
-
-        # for node in G.nodes():
-        #     G.nodes[node]["degree"] = G.degree(node)
-
-        # degree_cent = nx.degree_centrality(G)
-        # for node in G.nodes():
-        #     G.nodes[node]["degree_centrality"] = degree_cent[node]
-
-        # between_cent = nx.betweenness_centrality(G)
-        # for node in G.nodes():
-        #     G.nodes[node]["betweenness_centrality"] = between_cent[node]
+        for feature in self.feature_functions:
+            feature_val = self.feature_functions[feature](G)
+            for node in G.nodes():
+                for feature in self.feature_functions:
+                    G.nodes[node][feature] = feature_val[node]
 
         torch_G = pygUtils.from_networkx(G, group_node_attrs=list(self.feature_functions.keys()))
         true_labels = MIDSdataset.get_labels(utils.find_MIDS(G), G.number_of_nodes())
@@ -128,16 +115,20 @@ class MIDSdataset(InMemoryDataset):
             #data.append(torch_G.clone())
             data = torch.add(data, labels)
             count += 1
-            
+
             #data[-1].y = labels
         #print(data)
         #torch_G.y = torch.cat(true_labels) # all solutions
         #torch_G.y = true_labels[-1] # one solution
 
-        #data[:] = [x / len(true_labels) for x in data] 
+        #data[:] = [x / len(true_labels) for x in data]
         torch_G.y = torch.div(data,count)#/len(true_labels) # scaled all solutions into one
 
         return torch_G
+
+    @property
+    def features(self):
+        return list(self.feature_functions.keys())
 
     @staticmethod
     def get_labels(mids, num_nodes):
