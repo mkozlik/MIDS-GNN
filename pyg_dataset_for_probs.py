@@ -10,7 +10,7 @@ import networkx as nx
 import numpy as np
 import torch
 import torch_geometric.utils as pygUtils
-import Utilities.utils as utils
+import Utilities.mids_utils as mids_utils
 import yaml
 from matplotlib import pyplot as plt
 from matplotlib.cm import ScalarMappable
@@ -170,7 +170,7 @@ class MIDSDataset(InMemoryDataset):
 
     @staticmethod
     def true_probabilities(G):
-        true_labels = MIDSDataset.get_labels(utils.find_MIDS(G), G.number_of_nodes())
+        true_labels = MIDSDataset.get_labels(mids_utils.find_MIDS(G), G.number_of_nodes())
         data = torch.zeros(len(true_labels[0]))
         count = 0
         print(true_labels)
@@ -182,12 +182,12 @@ class MIDSDataset(InMemoryDataset):
 
     @staticmethod
     def true_labels_single(G):
-        true_labels = MIDSDataset.get_labels(utils.find_MIDS(G), G.number_of_nodes())
+        true_labels = MIDSDataset.get_labels(mids_utils.find_MIDS(G), G.number_of_nodes())
         return true_labels[random.randrange(0, len(true_labels))]
 
     @staticmethod
     def true_labels_all(G):
-        true_labels = MIDSDataset.get_labels(utils.find_MIDS(G), G.number_of_nodes())
+        true_labels = MIDSDataset.get_labels(mids_utils.find_MIDS(G), G.number_of_nodes())
         return torch.cat(true_labels)
 
     # ************************
