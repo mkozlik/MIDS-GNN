@@ -128,15 +128,19 @@ custom_gnns = {x.__name__: x for x in []}
 # ***************************************
 # *************** DATASET ***************
 # ***************************************
-def load_dataset(
-    selected_graph_sizes,
-    selected_features=[],
-    label_normalization=None,
-    split=0.8,
-    batch_size=1.0,
-    seed=42,
-    suppress_output=False,
-):
+def load_dataset(selected_features=[], split=0.8, batch_size=1.0, seed=42, suppress_output=False):
+    # Set up dataset.
+    selected_graph_sizes = {
+        3: -1,
+        4: -1,
+        5: -1,
+        6: -1,
+        7: -1,
+        8: -1,
+        # 9:  10000,
+        # 10: 10000
+    }
+
     # Load the dataset.
     try:
         root = pathlib.Path(__file__).parents[0] / "Dataset"  # For standalone script.
@@ -235,7 +239,9 @@ def generate_model(architecture, in_channels, hidden_channels, gnn_layers, **kwa
         #     gnn_layers=gnn_layers,
         #     **kwargs,
         # )
-        model = premade_gnns[architecture](in_channels, hidden_channels, gnn_layers, 1, **kwargs)
+        model = premade_gnns[architecture](
+            in_channels=in_channels, hidden_channels=hidden_channels, num_layers=gnn_layers, out_channels=1, **kwargs
+        )
     else:
         # TODO: adapt
         MyGNN = custom_gnns[architecture]
@@ -279,7 +285,7 @@ def testing_pass(model, batch, criterion):
 def testing_pass_batch(model, batch, criterion, accuracy=False):
     with torch.no_grad():
         data = batch.to(device)
-        out = model(data.x.type(torch.FloatTensor).to(device), data.edge_index, data.batch)
+        out = model(data.x, data.edge_index, batch=data.batch)
         loss = criterion(out.squeeze(), data.y).item()  # Compute the loss.
         correct = 0
         if accuracy:
@@ -397,18 +403,24 @@ def train(
     return results
 
 
-def plot_training_curves(num_epochs, train_losses, test_losses, train_accuracies, test_accuracies, criterion):
+def plot_training_curves(num_epochs, train_losses, test_losses, train_accuracies, test_accuracies, criterion, title):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=list(range(1, num_epochs + 1)), y=train_losses, mode="lines", name="Train Loss"))
     fig.add_trace(go.Scatter(x=list(range(1, num_epochs + 1)), y=test_losses, mode="lines", name="Test Loss"))
-    fig.update_layout(title="Training and Test Loss", xaxis_title="Epoch", yaxis_title=criterion)
+    fig.update_layout(title=f"Training and Test Loss - {title}", xaxis_title="Epoch", yaxis_title=criterion)
     fig.show()
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=list(range(1, num_epochs + 1)), y=train_accuracies, mode="lines", name="Train Accuracy"))
     fig.add_trace(go.Scatter(x=list(range(1, num_epochs + 1)), y=test_accuracies, mode="lines", name="Test Accuracy"))
-    fig.update_layout(title="Training and Test Accuracy", xaxis_title="Epoch", yaxis_title="Accuracy (%)")
+    fig.update_layout(title=f"Training and Test Accuracy - {title}", xaxis_title="Epoch", yaxis_title="Accuracy (%)")
     fig.show()
+
+
+def config_description(config):
+    """Create a short description of the configuration."""
+    desc = "{architecture}-{gnn_layers}x{hidden_channels}-{activation}-{jk}-D{dropout}-lr{learning_rate}"
+    return desc.format(**config)
 
 
 def eval_batch(model, batch, plot_graphs=False):
@@ -417,7 +429,7 @@ def eval_batch(model, batch, plot_graphs=False):
 
     # Make predictions.
     data = batch.to(device)
-    out = model(data.x, data.edge_index, data.batch)
+    out = model(data.x, data.edge_index, batch=data.batch)
     pred = torch.where(out > 0, 1.0, 0.0)
 
     # Unbatch the data.
@@ -524,18 +536,6 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     if is_best_run:
         tags.append("BEST")
 
-    # Set up dataset.
-    selected_graph_sizes = {
-        3: -1,
-        4: -1,
-        5: -1,
-        6: -1,
-        7: -1,
-        8: -1,
-        # 9:  10000,
-        # 10: 10000
-    }
-
     # Set up the run
     run = wandb.init(mode=wandb_mode, project="gnn_fiedler_approx_v2", tags=tags, config=config)
     config = wandb.config
@@ -551,9 +551,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
 
     # Load the dataset.
     train_data_obj, test_data_obj, dataset_config, features, dataset_props = load_dataset(
-        selected_graph_sizes,
         selected_features=config.get("selected_features", []),
-        label_normalization=config.get("label_normalization"),
         batch_size=bs,
         split=config.get("dataset", {}).get("split", 0.8),
         suppress_output=is_sweep,
@@ -604,6 +602,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
             train_results["train_accuracies"],
             train_results["test_accuracies"],
             type(criterion).__name__,
+            config_description(config),
         )
 
     # Run evaluation.
@@ -682,7 +681,7 @@ if __name__ == "__main__":
     if args.standalone:
         global_config = {
             ## Model configuration
-            "architecture": "GAT",
+            "architecture": "GraphSAGE",
             "hidden_channels": 32,
             "gnn_layers": 5,
             # "mlp_layers": 2,
@@ -694,7 +693,6 @@ if __name__ == "__main__":
             "learning_rate": 0.01,
             "epochs": 1000,
             ## Dataset configuration
-            "label_normalization": None,
             # "selected_features": ["random1"]
         }
         run = main(global_config, eval_type, eval_target, args.no_wandb, args.best)
