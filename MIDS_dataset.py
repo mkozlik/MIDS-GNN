@@ -307,7 +307,7 @@ class MIDSLabelsDataset(MIDSDataset):
         "graph_density": lambda g: [nx.density(g)] * nx.number_of_nodes(g),
     }
 
-    target_function = staticmethod(MIDSDataset.true_labels_all_padded)
+    target_function = staticmethod(MIDSDataset.true_labels_single)
 
 
 def inspect_dataset(dataset):

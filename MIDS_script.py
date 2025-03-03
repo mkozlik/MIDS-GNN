@@ -34,7 +34,7 @@ from Utilities.graph_utils import (
     graphs_to_tuple,
 )
 
-BEST_MODEL_PATH = pathlib.Path(__file__).parents[1] / "models"
+BEST_MODEL_PATH = pathlib.Path(__file__).parents[0] / "Models"
 BEST_MODEL_PATH.mkdir(exist_ok=True, parents=True)
 BEST_MODEL_PATH /= "best_model.pth"
 
@@ -58,6 +58,19 @@ class EvalTarget(enum.Enum):
 # ***************************************
 premade_gnns = {x.__name__: x for x in [MLP, GCN, GraphSAGE, GIN, GAT, PNA]}
 custom_gnns = {x.__name__: x for x in []}
+
+class GNNWrapper(torch.nn.Module):
+    def __init__(self, gnn_model, in_channels, hidden_channels, num_layers, out_channels=1, **kwargs):
+        super().__init__()
+        self.gnn = gnn_model(in_channels=in_channels, hidden_channels=hidden_channels, num_layers=num_layers, out_channels=out_channels, **kwargs)
+        self.is_mlp = isinstance(self.gnn, MLP)
+
+    def forward(self, x, edge_index, batch):
+        if self.is_mlp:
+            x = self.gnn(x=x, batch=batch)
+        else:
+            x = self.gnn(x=x, edge_index=edge_index, batch=batch)
+        return x
 
 
 # ***************************************
@@ -126,6 +139,10 @@ class LossWrapper(torch.nn.Module):
             return self.criterion(logits, y, batch)
         return self.criterion(logits, y)
 
+    @property
+    def name(self):
+        return self.criterion.__class__.__name__
+
 
 # ***************************************
 # *************** DATASET ***************
@@ -149,7 +166,7 @@ def load_dataset(selected_features=[], split=0.8, batch_size=1.0, seed=42, suppr
     except NameError:
         root = pathlib.Path().cwd().parents[1] / "Dataset"  # For Jupyter notebook.
     graphs_loader = GraphDataset(selection=selected_graph_sizes, seed=seed)
-    dataset = MIDSProbabilitiesDataset(root, graphs_loader, selected_features=selected_features)
+    dataset = MIDSLabelsDataset(root, graphs_loader, selected_features=selected_features)
 
     # Save dataset configuration.
     dataset_config = {
@@ -235,24 +252,22 @@ def load_dataset(selected_features=[], split=0.8, batch_size=1.0, seed=42, suppr
 # ***************************************
 # ************* FUNCTIONS ***************
 # ***************************************
-def generate_model(architecture, in_channels, hidden_channels, gnn_layers, **kwargs):
+def generate_model(architecture, in_channels, hidden_channels, num_layers, out_channels=1, **kwargs):
     """Generate a Neural Network model based on the architecture and hyperparameters."""
     # GLOBALS: device, premade_gnns, custom_gnns
     if architecture in premade_gnns:
-        # model = GNNWrapper(
-        #     gnn_model=premade_gnns[architecture],
-        #     in_channels=in_channels,
-        #     hidden_channels=hidden_channels,
-        #     gnn_layers=gnn_layers,
-        #     **kwargs,
-        # )
-        model = premade_gnns[architecture](
-            in_channels=in_channels, hidden_channels=hidden_channels, num_layers=gnn_layers, out_channels=1, **kwargs
+        model = GNNWrapper(
+            gnn_model=premade_gnns[architecture],
+            in_channels=in_channels,
+            hidden_channels=hidden_channels,
+            num_layers=num_layers,
+            out_channels=out_channels ,
+            **kwargs,
         )
     else:
         # TODO: adapt
         MyGNN = custom_gnns[architecture]
-        model = MyGNN(input_channels=in_channels, mp_layers=[hidden_channels] * gnn_layers)
+        model = MyGNN(input_channels=in_channels, mp_layers=[hidden_channels] * num_layers)
 
     model = model.to(device)
     return model
@@ -272,7 +287,7 @@ def training_pass(model, batch, optimizer, criterion):
     """Perform a single training pass over the batch."""
     data = batch.to(device)  # Move to CUDA if available.
     optimizer.zero_grad()  # Clear gradients.
-    out = model(data.x, data.edge_index, batch=data.batch)  # Perform a single forward pass.
+    out = model(x=data.x, edge_index=data.edge_index, batch=data.batch)  # Perform a single forward pass.
     loss = criterion(out.squeeze(), data.y, data.batch)  # Compute the loss.
     loss.backward()  # Derive gradients.
     optimizer.step()  # Update parameters based on gradients.
@@ -373,12 +388,11 @@ def train(
         # Store the losses.
         train_losses[epoch - 1] = train_loss
         test_losses[epoch - 1] = test_loss
-        if calc_accuracy:
-            train_accuracies[epoch - 1] = train_acc
-            test_accuracies[epoch - 1] = test_acc
-        else:
-            train_accuracies[epoch - 1] = train_accuracies[epoch - 2]
-            test_accuracies[epoch - 1] = test_accuracies[epoch - 2]
+        if not calc_accuracy:
+            train_acc = train_accuracies[epoch - 2]
+            test_acc = test_accuracies[epoch - 2]
+        train_accuracies[epoch - 1] = train_acc
+        test_accuracies[epoch - 1] = test_acc
         wandb.log({"train_loss": train_loss, "test_loss": test_loss, "train_acc": train_acc, "test_acc": test_acc})
 
         # Save the best model.
@@ -441,6 +455,7 @@ def eval_batch(model, batch, plot_graphs=False):
 
     # Unbatch the data.
     predictions = [d.cpu().squeeze().numpy().astype(np.int32) for d in tg_utils.unbatch(pred, data.batch)]
+    # TODO: Remove padded values from the ground truth.
     ground_truth = [d.cpu().numpy().astype(np.int32) for d in tg_utils.unbatch(data.y, data.batch)]
 
     # Extract graphs and create visualizations.
@@ -525,16 +540,22 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     # Tags for W&B.
     is_sweep = config is None
     wandb_mode = "disabled" if no_wandb else "online"
-    tags = ["toy_problem"]
+    tags = ["first_test"]
     if is_best_run:
         tags.append("BEST")
 
     # Set up the run
-    run = wandb.init(mode=wandb_mode, project="gnn_fiedler_approx_v2", tags=tags, config=config)
+    run = wandb.init(mode=wandb_mode, project="mids_baselines", tags=tags, config=config)
     config = wandb.config
     if is_sweep:
         print(f"Running sweep with config: {config}...")
-    model_kwargs = config.get("model_kwargs", {})
+
+    # Set up the default model configuration.
+    model_kwargs = {}
+    if config["architecture"] == "GIN":
+        model_kwargs = {"train_eps": True}
+
+    model_kwargs.update(config.get("model_kwargs", {}))
 
     # Load the dataset.
     train_data_obj, test_data_obj, dataset_config, features, dataset_props = load_dataset(
@@ -586,6 +607,8 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     )
     run.summary["best_train_loss"] = min(train_results["train_losses"])
     run.summary["best_test_loss"] = min(train_results["test_losses"])
+    run.summary["best_train_accuracy"] = max(train_results["train_accuracies"])
+    run.summary["best_test_accuracy"] = max(train_results["test_accuracies"])
     run.summary["duration"] = train_results["duration"]
     if not is_sweep:
         plot_training_curves(
@@ -594,7 +617,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
             train_results["test_losses"],
             train_results["train_accuracies"],
             train_results["test_accuracies"],
-            type(criterion).__name__,
+            criterion.name,
             config_description(config),
         )
 
@@ -618,8 +641,8 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
             make_table,
             suppress_output=is_sweep,
         )
-        run.summary["loss"] = eval_results["loss"]
-        run.summary["accuracy"] = eval_results["accuracy"]
+        run.summary["eval_loss"] = eval_results["loss"]
+        run.summary["eval_accuracy"] = eval_results["accuracy"]
 
         if eval_type.value > EvalType.BASIC.value:
             run.log({"results_table": eval_results["table"]})
