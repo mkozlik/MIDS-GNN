@@ -114,15 +114,17 @@ class MinBCEWithLogitsLoss(torch.nn.Module):
         return min_loss_per_graph  # Return per-graph loss if no reduction
 
 
-def loss_wrapper(criterion):
-    def wrapper(logits, y, batch):
-        return criterion(logits, y)
+class LossWrapper(torch.nn.Module):
+    def __init__(self, criterion):
+        super().__init__()
+        self.criterion = criterion
+        self.is_classification = not isinstance(criterion, torch.nn.L1Loss)
+        self.is_batched = "batch" in inspect.signature(criterion.forward).parameters
 
-    criterion_params = inspect.signature(criterion.forward).parameters
-    if "batch" in criterion_params:
-        return criterion
-
-    return wrapper
+    def forward(self, logits, y, batch):
+        if self.is_batched:
+            return self.criterion(logits, y, batch)
+        return self.criterion(logits, y)
 
 
 # ***************************************
@@ -147,7 +149,7 @@ def load_dataset(selected_features=[], split=0.8, batch_size=1.0, seed=42, suppr
     except NameError:
         root = pathlib.Path().cwd().parents[1] / "Dataset"  # For Jupyter notebook.
     graphs_loader = GraphDataset(selection=selected_graph_sizes, seed=seed)
-    dataset = MIDSLabelsDataset(root, graphs_loader, selected_features=selected_features)
+    dataset = MIDSProbabilitiesDataset(root, graphs_loader, selected_features=selected_features)
 
     # Save dataset configuration.
     dataset_config = {
@@ -364,7 +366,7 @@ def train(
         # Perform one pass over the training set and then test on both sets.
         train_loss = do_train(model, train_data_obj, optimizer, criterion)
 
-        calc_accuracy = epoch % 10 == 0 or epoch == num_epochs
+        calc_accuracy = (epoch % 10 == 0 or epoch == num_epochs) and criterion.is_classification
         train_loss, train_acc = do_test(model, train_data_obj, criterion, calc_accuracy)
         test_loss, test_acc = do_test(model, test_data_obj, criterion, calc_accuracy)
 
@@ -466,20 +468,6 @@ def eval_batch(model, batch, plot_graphs=False):
     )
 
 
-def baseline(train_data, test_data, criterion):
-    if isinstance(train_data, DataLoader) or isinstance(test_data, DataLoader):
-        return np.inf, np.inf
-
-    # Average target value on the given data
-    avg = torch.mean(train_data.y)
-
-    # Mean absolute error
-    train = criterion(train_data.y, avg * torch.ones_like(train_data.y))
-    test = criterion(test_data.y, avg * torch.ones_like(test_data.y))
-
-    return train.item(), test.item()
-
-
 def evaluate(
     model, epoch, criterion, train_data, test_data, plot_graphs=False, make_table=False, suppress_output=False
 ):
@@ -487,8 +475,8 @@ def evaluate(
     df = pd.DataFrame()
 
     # Loss on the train and test set.
-    train_loss, train_acc = do_test(model, train_data, criterion, True)
-    test_loss, test_acc = do_test(model, test_data, criterion, True)
+    train_loss, train_acc = do_test(model, train_data, criterion, criterion.is_classification)
+    test_loss, test_acc = do_test(model, test_data, criterion, criterion.is_classification)
 
     # Build a detailed results DataFrame.
     with torch.no_grad():
@@ -572,13 +560,13 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         **model_kwargs,
     )
     optimizer = generate_optimizer(model, config["optimizer"], config["learning_rate"])
-    if dataset_config["target"] == "true_labels_all_padded":
-        criterion = MinBCEWithLogitsLoss()
-    elif dataset_config["target"] == "true_labels_all_stacked":
-        criterion = CustomLossFunction()
-    else:
-        criterion = torch.nn.BCEWithLogitsLoss()
-    criterion = loss_wrapper(criterion)
+    criterion_options = {
+        "true_labels_all_padded": MinBCEWithLogitsLoss,
+        "true_labels_all_stacked": CustomLossFunction,
+        "true_labels_single": torch.nn.BCEWithLogitsLoss,
+        "true_probabilities": torch.nn.L1Loss,
+    }
+    criterion = LossWrapper(criterion_options[dataset_config["target"]]())
 
     wandb.watch(model, criterion, log="all", log_freq=100)
     # torchexplorer.watch(model, backend="wandb")

@@ -173,7 +173,6 @@ class MIDSDataset(InMemoryDataset):
         true_labels = MIDSDataset.get_labels(mids_utils.find_MIDS(G), G.number_of_nodes())
         data = torch.zeros(len(true_labels[0]))
         count = 0
-        print(true_labels)
         for labels in true_labels:
             data = torch.add(data, labels)
             count += 1
@@ -308,7 +307,7 @@ class MIDSLabelsDataset(MIDSDataset):
         "graph_density": lambda g: [nx.density(g)] * nx.number_of_nodes(g),
     }
 
-    target_function = staticmethod(MIDSDataset.true_labels_single)
+    target_function = staticmethod(MIDSDataset.true_labels_all_padded)
 
 
 def inspect_dataset(dataset):
