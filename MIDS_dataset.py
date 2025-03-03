@@ -186,10 +186,17 @@ class MIDSDataset(InMemoryDataset):
         return true_labels[random.randrange(0, len(true_labels))]
 
     @staticmethod
-    def true_labels_all(G):
+    def true_labels_all_padded(G):
+        max_solutions = 10
+        true_labels = MIDSDataset.get_labels(mids_utils.find_MIDS(G), G.number_of_nodes())
+        true_labels = true_labels[:max_solutions]
+        padding = [-1 * torch.ones(len(true_labels[0])) for _ in range(len(true_labels), max_solutions)]
+        return torch.stack(true_labels+padding, dim=1)
+
+    @staticmethod
+    def true_labels_all_stacked(G):
         true_labels = MIDSDataset.get_labels(mids_utils.find_MIDS(G), G.number_of_nodes())
         return torch.cat(true_labels)
-
     # ************************
 
     # ******************************************
@@ -278,7 +285,7 @@ class MIDSProbabilitiesDataset(MIDSDataset):
         "graph_density": lambda g: [nx.density(g)] * nx.number_of_nodes(g),
     }
 
-    target_function = staticmethod(lambda G: MIDSDataset.true_probabilities(G))
+    target_function = staticmethod(MIDSDataset.true_probabilities)
 
 
 class MIDSLabelsDataset(MIDSDataset):
@@ -301,20 +308,20 @@ class MIDSLabelsDataset(MIDSDataset):
         "graph_density": lambda g: [nx.density(g)] * nx.number_of_nodes(g),
     }
 
-    target_function = staticmethod(lambda G: MIDSDataset.true_labels_single(G))
+    target_function = staticmethod(MIDSDataset.true_labels_single)
 
 
 def inspect_dataset(dataset):
     if isinstance(dataset, InMemoryDataset):
         dataset_name = dataset.__repr__()
         # y_values = dataset.y
-        # y_name = dataset.target_function.__name__
+        y_name = dataset.target_function.__name__
         num_features = dataset.num_features
         features = dataset.features
     else:
         dataset_name = "N/A"
         # y_values = torch.tensor([data.y for data in dataset])
-        # y_name = "N/A"
+        y_name = "N/A"
         num_features = dataset[0].x.shape[1]
         features = "N/A"
 
@@ -324,7 +331,7 @@ def inspect_dataset(dataset):
     print("=" * len(header))
     print(f"Number of graphs: {len(dataset)}")
     print(f"Number of features: {num_features} ({features})")
-    # print(f"Target: {y_name}")
+    print(f"Target: {y_name}")
     # print(f"    Min: {y_values.min().item():.3f}")
     # print(f"    Max: {y_values.max().item():.3f}")
     # print(f"    Mean: {y_values.mean().item():.3f}")
@@ -359,7 +366,7 @@ def inspect_graphs(dataset, num_graphs=1):
         print("=" * len(header))
         print()
 
-        MIDSDataset.visualize_data(data)
+        # MIDSDataset.visualize_data(data)
 
 
 def main():
@@ -384,7 +391,7 @@ def main():
     loader = GraphDataset(selection=selected_graph_sizes)
 
     with codetiming.Timer():
-        dataset = MIDSProbabilitiesDataset(root, loader)
+        dataset = MIDSLabelsDataset(root, loader)
 
     inspect_dataset(dataset)
     inspect_graphs(dataset, num_graphs=2)

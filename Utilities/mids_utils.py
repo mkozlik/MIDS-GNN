@@ -77,6 +77,7 @@ def check_MIDS_batch(data, pred):
     node_batch = data.batch
     row, _ = data.edge_index
     edge_batch = data.batch[row]
+    target = data.y if data.y.dim() == 1 else data.y[:, 0]
 
     device = data.y.device
     dtype = torch.int
@@ -86,7 +87,7 @@ def check_MIDS_batch(data, pred):
     ## Step 1: Check candidate set size condition
     # Sum up all target values across the batch.
     # Floating point errors are possible so we round to the nearest integer (diffrence is in the order <1e-3).
-    target_values = torch.zeros(batch_size, dtype=data.y.dtype, device=device).scatter_add_(0, node_batch, data.y)
+    target_values = torch.zeros(batch_size, dtype=data.y.dtype, device=device).scatter_add_(0, node_batch, target)
     target_values = torch.round(target_values).to(torch.int)
 
     mids_sizes = torch.zeros(batch_size, dtype=dtype, device=device).scatter_add_(0, node_batch, pred)

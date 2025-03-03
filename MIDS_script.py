@@ -1,6 +1,7 @@
 import argparse
 import datetime
 import enum
+import inspect
 import pathlib
 import random
 from collections import Counter
@@ -10,6 +11,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import torch
+import torch.nn.functional as F
 import torch_geometric.utils as tg_utils
 import wandb
 from torch_geometric.data import Data
@@ -24,7 +26,7 @@ from torch_geometric.nn import (
 )
 
 from my_graphs_dataset import GraphDataset, GraphType
-from MIDS_dataset import MIDSProbabilitiesDataset, MIDSLabelsDataset, inspect_dataset, inspect_graphs
+from MIDS_dataset import MIDSDataset, MIDSProbabilitiesDataset, MIDSLabelsDataset, inspect_dataset
 from Utilities.mids_utils import check_MIDS_batch
 from Utilities.graph_utils import (
     create_graph_wandb,
@@ -54,75 +56,73 @@ class EvalTarget(enum.Enum):
 # ***************************************
 # *************** MODELS ****************
 # ***************************************
-class GNNWrapper(torch.nn.Module):
-    def __init__(
-        self,
-        gnn_model,
-        in_channels: int,
-        hidden_channels: int,
-        gnn_layers: int,
-        mlp_layers: int = 1,
-        pool="mean",
-        pool_kwargs={},
-        **kwargs,
-    ):
-        super().__init__()
-        self.gnn = gnn_model(
-            in_channels=in_channels, hidden_channels=hidden_channels, out_channels=None, num_layers=gnn_layers, **kwargs
-        )
-
-        self.pool, hc = get_global_pooling(pool, hidden_channels=hidden_channels, **pool_kwargs)
-
-        mlp_layer_list = []
-        for i in range(mlp_layers):
-            if i < mlp_layers - 1:
-                mlp_layer_list.append(torch.nn.Linear(hc, hidden_channels))
-                mlp_layer_list.append(torch.nn.ReLU())
-                hc = hidden_channels
-            else:
-                mlp_layer_list.append(torch.nn.Linear(hidden_channels, 1))
-        self.classifier = torch.nn.Sequential(*mlp_layer_list)
-        self.mlp_layers = mlp_layers
-
-    def forward(self, x, edge_index, batch):
-        x = self.gnn(x, edge_index)
-        x = self.pool(x, batch)
-        x = self.classifier(x)
-        return x
-
-    @property
-    def descriptive_name(self):
-        try:
-            # Base name of the used GNN
-            name = [f"{self.gnn.__class__.__name__}"]
-            # Number of layers and size of hidden channel or hidden channels list
-            if hasattr(self.gnn, "channel_list"):
-                name.append(f"{self.gnn.num_layers}x{self.gnn.channel_list[-1]}_{self.mlp_layers}")
-            else:
-                name.append(f"{self.gnn.num_layers}x{self.gnn.hidden_channels}_{self.mlp_layers}")
-            # Activation function
-            name.append(f"{self.gnn.act.__class__.__name__}")
-            # Dropout
-            if isinstance(self.gnn.dropout, torch.nn.Dropout):
-                name.append(f"D{self.gnn.dropout.p:.2f}")
-            else:
-                name.append(f"D{self.gnn.dropout[0]:.2f}")
-            # Pooling layer: either a function or a class
-            if hasattr(self.pool, "__name__"):
-                name.append(f"{self.pool.__name__}")
-            else:
-                name.append(f"{self.pool.__class__.__name__}")
-            # Number of parameters
-            # Join all parts and return.
-            name = "-".join(name)
-            return name
-
-        except Exception as e:
-            raise ValueError(f"Error in descriptive_name: {e}")
-
-
 premade_gnns = {x.__name__: x for x in [MLP, GCN, GraphSAGE, GIN, GAT, PNA]}
 custom_gnns = {x.__name__: x for x in []}
+
+
+# ***************************************
+# ************* LOSS FUNCTION ************
+# ***************************************
+class CustomLossFunction(torch.nn.BCEWithLogitsLoss):
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        loss = torch.tensor(float("inf"))
+
+        for tens in torch.split(target, input.size(dim=0)):
+            new = F.binary_cross_entropy_with_logits(
+                input, tens, self.weight, pos_weight=self.pos_weight, reduction=self.reduction
+            )
+            if new.item() < loss.item():
+                loss = new
+        return loss
+
+
+class MinBCEWithLogitsLoss(torch.nn.Module):
+    def __init__(self, reduction="mean"):
+        super().__init__()
+        self.bce = torch.nn.BCEWithLogitsLoss(reduction="none")  # No reduction for manual processing
+        self.reduction = reduction
+
+    def forward(self, logits, y, batch):
+        """
+        logits: Tensor of shape [num_nodes, 1] - Logits for all nodes
+        y: Tensor of shape [num_nodes, num_options] - Padded target values (-1 for padding)
+        batch: Tensor of shape [num_nodes] - Graph indices
+        """
+        num_nodes, num_options = y.shape
+        logits_expanded = logits.unsqueeze(1).expand(-1, num_options)  # [num_nodes, num_options]
+
+        # Compute BCE loss and mask out padding
+        loss = self.bce(logits_expanded, y.float())  # [num_nodes, num_options]
+        loss[y == -1] = float("inf")  # Ignore padded values
+
+        # Compute mean loss per graph per option
+        graph_ids = batch.unsqueeze(1).expand(-1, num_options)  # Broadcast batch to match shape
+        mean_loss_per_graph = torch.zeros(batch.max() + 1, num_options, device=logits.device)
+
+        mean_loss_per_graph = torch.scatter_reduce(
+            mean_loss_per_graph, 0, graph_ids, loss, reduce="mean", include_self=False
+        )  # Shape: [num_graphs, num_options]
+
+        # Take the minimum mean loss across options for each graph
+        min_loss_per_graph, _ = mean_loss_per_graph.min(dim=1)  # [num_graphs]
+
+        # Apply batch reduction
+        if self.reduction == "mean":
+            return min_loss_per_graph.mean()
+        elif self.reduction == "sum":
+            return min_loss_per_graph.sum()
+        return min_loss_per_graph  # Return per-graph loss if no reduction
+
+
+def loss_wrapper(criterion):
+    def wrapper(logits, y, batch):
+        return criterion(logits, y)
+
+    criterion_params = inspect.signature(criterion.forward).parameters
+    if "batch" in criterion_params:
+        return criterion
+
+    return wrapper
 
 
 # ***************************************
@@ -153,6 +153,7 @@ def load_dataset(selected_features=[], split=0.8, batch_size=1.0, seed=42, suppr
     dataset_config = {
         "name": type(dataset).__name__,
         "selected_graphs": str(selected_graph_sizes),
+        "target": dataset.target_function.__name__,
         "split": split,
         "batch_size": batch_size,
         "seed": seed,
@@ -175,6 +176,7 @@ def load_dataset(selected_features=[], split=0.8, batch_size=1.0, seed=42, suppr
     np.random.seed(seed)
     torch.manual_seed(seed)
     dataset = dataset.shuffle()
+    assert isinstance(dataset, MIDSDataset)  # Shuffle can return a tuple, we need to tell IntelliSense it does not.
 
     train_size = round(dataset_config["split"] * len(dataset))
     train_dataset = dataset[:train_size]
@@ -196,7 +198,10 @@ def load_dataset(selected_features=[], split=0.8, batch_size=1.0, seed=42, suppr
         print(f"Dataset splits  : {splits_per_size}")
 
     # Batch and load data.
-    batch_size = int(np.ceil(dataset_config["batch_size"] * max(len(train_dataset), len(test_dataset))))
+    if dataset.target_function.__name__ == "true_labels_all_stacked":
+        batch_size = 1
+    else:
+        batch_size = int(np.ceil(dataset_config["batch_size"] * max(len(train_dataset), len(test_dataset))))
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)  # type: ignore
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)  # type: ignore
 
@@ -266,7 +271,7 @@ def training_pass(model, batch, optimizer, criterion):
     data = batch.to(device)  # Move to CUDA if available.
     optimizer.zero_grad()  # Clear gradients.
     out = model(data.x, data.edge_index, batch=data.batch)  # Perform a single forward pass.
-    loss = criterion(out.squeeze(), data.y)  # Compute the loss.
+    loss = criterion(out.squeeze(), data.y, data.batch)  # Compute the loss.
     loss.backward()  # Derive gradients.
     optimizer.step()  # Update parameters based on gradients.
     return loss.item()
@@ -286,7 +291,7 @@ def testing_pass_batch(model, batch, criterion, accuracy=False):
     with torch.no_grad():
         data = batch.to(device)
         out = model(data.x, data.edge_index, batch=data.batch)
-        loss = criterion(out.squeeze(), data.y).item()  # Compute the loss.
+        loss = criterion(out.squeeze(), data.y, data.batch).item()  # Compute the loss.
         correct = 0
         if accuracy:
             pred = torch.where(out.squeeze() > 0, 1.0, 0.0)
@@ -543,16 +548,10 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         print(f"Running sweep with config: {config}...")
     model_kwargs = config.get("model_kwargs", {})
 
-    # For this combination of parameters, the model is too large to fit in memory, so we need to reduce the batch size.
-    if model_kwargs and model_kwargs.get("aggr") == "lstm" and model_kwargs.get("project"):
-        bs = 0.5
-    else:
-        bs = 1.0
-
     # Load the dataset.
     train_data_obj, test_data_obj, dataset_config, features, dataset_props = load_dataset(
         selected_features=config.get("selected_features", []),
-        batch_size=bs,
+        batch_size=1.0,
         split=config.get("dataset", {}).get("split", 0.8),
         suppress_output=is_sweep,
     )
@@ -573,7 +572,13 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         **model_kwargs,
     )
     optimizer = generate_optimizer(model, config["optimizer"], config["learning_rate"])
-    criterion = torch.nn.BCEWithLogitsLoss()
+    if dataset_config["target"] == "true_labels_all_padded":
+        criterion = MinBCEWithLogitsLoss()
+    elif dataset_config["target"] == "true_labels_all_stacked":
+        criterion = CustomLossFunction()
+    else:
+        criterion = torch.nn.BCEWithLogitsLoss()
+    criterion = loss_wrapper(criterion)
 
     wandb.watch(model, criterion, log="all", log_freq=100)
     # torchexplorer.watch(model, backend="wandb")
