@@ -24,6 +24,7 @@ from torch_geometric.nn import (
     MLP,
     PNA,
     GraphSAGE,
+    GATConv
 )
 
 from my_graphs_dataset import GraphDataset, GraphType
@@ -57,8 +58,37 @@ class EvalTarget(enum.Enum):
 # ***************************************
 # *************** MODELS ****************
 # ***************************************
+class GATLinNet(torch.nn.Module):
+    def __init__(self, in_channels, hidden_channels, num_layers, out_channels=1, **kwargs):
+        super().__init__()
+
+        heads = kwargs.get("heads", 4)
+        self.num_layers = num_layers
+        self.convs = torch.nn.ModuleList()
+        self.lins = torch.nn.ModuleList()
+
+        if num_layers > 1:
+            self.convs.append(GATConv(in_channels, hidden_channels, heads=heads))
+            self.lins.append(torch.nn.Linear(in_channels, heads * hidden_channels))
+            in_channels = heads * hidden_channels
+
+        for _ in range(num_layers - 2):
+            self.convs.append(GATConv(in_channels, hidden_channels, heads=heads))
+            self.lins.append(torch.nn.Linear(in_channels, heads * hidden_channels))
+            in_channels = heads * hidden_channels
+
+        self.convs.append(GATConv(in_channels, out_channels, heads=heads, concat=False))
+        self.lins.append(torch.nn.Linear(in_channels, out_channels))
+
+    def forward(self, x, edge_index, batch):
+        for i in range(self.num_layers - 1):
+            x = F.elu(self.convs[i](x, edge_index) + self.lins[i](x))
+        x = self.convs[-1](x, edge_index) + self.lins[-1](x)
+        return x
+
+
 premade_gnns = {x.__name__: x for x in [MLP, GCN, GraphSAGE, GIN, GAT, PNA]}
-custom_gnns = {x.__name__: x for x in []}
+custom_gnns = {x.__name__: x for x in [GATLinNet]}
 
 class GNNWrapper(torch.nn.Module):
     def __init__(self, gnn_model, in_channels, hidden_channels, num_layers, out_channels=1, **kwargs):
@@ -266,9 +296,8 @@ def generate_model(architecture, in_channels, hidden_channels, num_layers, out_c
             **kwargs,
         )
     else:
-        # TODO: adapt
         MyGNN = custom_gnns[architecture]
-        model = MyGNN(input_channels=in_channels, mp_layers=[hidden_channels] * num_layers)
+        model = MyGNN(in_channels, hidden_channels, num_layers, out_channels=1, **kwargs)
 
     model = model.to(device)
     return model
@@ -703,9 +732,9 @@ if __name__ == "__main__":
     if args.standalone:
         global_config = {
             ## Model configuration
-            "architecture": "GraphSAGE",
+            "architecture": "GATLinNet",
             "hidden_channels": 32,
-            "gnn_layers": 5,
+            "gnn_layers": 3,
             # "mlp_layers": 2,
             "activation": "tanh",
             "jk": "none",
