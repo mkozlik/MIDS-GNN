@@ -11,4 +11,4 @@ export https_proxy="http://10.150.1.1:3128"
 
 cd $HOME/MIDS-GNN
 
-apptainer run --nv HPC/gnn_fiedler.sif wandb agent $sweep_ID
+apptainer run --nv $HOME/Topocon_GNN/gnn_fiedler_approx/HPC/gnn_fiedler.sif wandb agent $sweep_ID

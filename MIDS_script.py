@@ -4,6 +4,7 @@ import enum
 import inspect
 import pathlib
 import random
+import os
 from collections import Counter
 
 import codetiming
@@ -36,7 +37,7 @@ from Utilities.graph_utils import (
 
 BEST_MODEL_PATH = pathlib.Path(__file__).parents[0] / "Models"
 BEST_MODEL_PATH.mkdir(exist_ok=True, parents=True)
-BEST_MODEL_PATH /= "best_model.pth"
+BEST_MODEL_NAME = "best_model.pth"
 
 SORT_DATA = False
 
@@ -540,7 +541,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     # Tags for W&B.
     is_sweep = config is None
     wandb_mode = "disabled" if no_wandb else "online"
-    tags = ["first_test"]
+    tags = ["test_sweep"]
     if is_best_run:
         tags.append("BEST")
 
@@ -549,6 +550,11 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     config = wandb.config
     if is_sweep:
         print(f"Running sweep with config: {config}...")
+
+    if "PBS_O_HOME" in os.environ:
+        # We are on the HPC - paralel runs use the same disk.
+        global BEST_MODEL_PATH
+        BEST_MODEL_PATH /= f"{run.id}_{BEST_MODEL_NAME}"
 
     # Set up the default model configuration.
     model_kwargs = {}

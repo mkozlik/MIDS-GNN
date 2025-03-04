@@ -1,4 +1,4 @@
-program: MIDS_script.py
+program: /lustre/home/mkrizman/MIDS-GNN/MIDS_script.py
 name: HPC_baseline_single
 method: grid  # Bayesian works for small number of continuous parameters.
 metric:
