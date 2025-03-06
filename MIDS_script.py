@@ -29,6 +29,7 @@ from torch_geometric.nn import (
 
 from my_graphs_dataset import GraphDataset, GraphType
 from MIDS_dataset import MIDSDataset, MIDSProbabilitiesDataset, MIDSLabelsDataset, inspect_dataset
+from Utilities.script_utils import print_dataset_splits
 from Utilities.mids_utils import check_MIDS_batch
 from Utilities.graph_utils import (
     create_graph_wandb,
@@ -228,38 +229,44 @@ def load_dataset(selected_features=[], split=0.8, batch_size=1.0, seed=42, suppr
     dataset = dataset.shuffle()
     assert isinstance(dataset, MIDSDataset)  # Shuffle can return a tuple, we need to tell IntelliSense it does not.
 
-    train_size = round(dataset_config["split"] * len(dataset))
-    train_dataset = dataset[:train_size]
-    if len(dataset) - train_size > 0:
-        test_dataset = dataset[train_size:]
+    if isinstance(dataset_config["split"], tuple):
+        train_size, val_size = dataset_config["split"]
+        train_size = round(train_size * len(dataset))
+        val_size = round(val_size * len(dataset))
     else:
-        test_dataset = train_dataset
+        train_size = round(dataset_config["split"] * len(dataset))
+        val_size = len(dataset) - train_size
+
+    train_dataset = dataset[:train_size]
+    if val_size > 0:
+        val_dataset = dataset[train_size:train_size + val_size]
+    else:
+        val_dataset = train_dataset
+    val_size = len(val_dataset)
+
+    test_dataset = dataset[train_size + val_size:]
     test_size = len(test_dataset)
 
     if not suppress_output:
-        train_counter = Counter([data.x.shape[0] for data in train_dataset])  # type: ignore
-        test_counter = Counter([data.x.shape[0] for data in test_dataset])  # type: ignore
-        splits_per_size = {
-            size: round(train_counter[size] / (train_counter[size] + test_counter[size]), 2)
-            for size in set(train_counter + test_counter)
-        }
-        print(f"Training dataset: { {k: v for k, v in sorted(train_counter.items())} } ({train_counter.total()})")
-        print(f"Testing dataset : { {k: v for k, v in sorted(test_counter.items())} } ({test_counter.total()})")
-        print(f"Dataset splits  : {splits_per_size}")
+        print_dataset_splits(train_dataset, val_dataset, test_dataset)
 
     # Batch and load data.
     if dataset.target_function.__name__ == "true_labels_all_stacked":
         batch_size = 1
     else:
-        batch_size = int(np.ceil(dataset_config["batch_size"] * max(len(train_dataset), len(test_dataset))))
+        max_dataset_len = max(len(train_dataset), len(val_dataset), len(test_dataset))
+        batch_size = int(np.ceil(dataset_config["batch_size"] * max_dataset_len))
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)  # type: ignore
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)  # type: ignore
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)  # type: ignore
 
     # If the whole dataset fits in memory, we can use the following lines to get a single large batch.
     train_batch = next(iter(train_loader))
-    test_batch = next(iter(test_loader))
+    val_batch = next(iter(val_loader))
+    test_batch = next(iter(test_loader)) if test_size else None
 
     train_data_obj = train_batch if train_size <= batch_size else train_loader
+    val_data_obj = val_batch if val_size <= batch_size else val_loader
     test_data_obj = test_batch if test_size <= batch_size else test_loader
 
     if not suppress_output:
@@ -277,7 +284,7 @@ def load_dataset(selected_features=[], split=0.8, batch_size=1.0, seed=42, suppr
                 break
         print("========================================\n")
 
-    return train_data_obj, test_data_obj, dataset_config, features, dataset_props
+    return train_data_obj, val_data_obj, test_data_obj, dataset_config, features, dataset_props
 
 
 # ***************************************
@@ -390,17 +397,17 @@ def do_test(model, data, criterion, calc_accuracy=False):
 
 
 def train(
-    model, optimizer, criterion, train_data_obj, test_data_obj, num_epochs=100, suppress_output=False, save_best=False
+    model, optimizer, criterion, train_data_obj, val_data_obj, num_epochs=100, suppress_output=False, save_best=False
 ):
     # GLOBALS: device
 
     # Prepare for training.
     train_losses = np.zeros(num_epochs)
-    test_losses = np.zeros(num_epochs)
+    val_losses = np.zeros(num_epochs)
     train_accuracies = np.zeros(num_epochs)
-    test_accuracies = np.zeros(num_epochs)
+    val_accuracies = np.zeros(num_epochs)
     best_loss = float("inf")
-    test_loss = 0
+    val_loss = 0
 
     # Start the training loop with timer.
     training_timer = codetiming.Timer(logger=None)
@@ -413,31 +420,31 @@ def train(
 
         calc_accuracy = (epoch % 10 == 0 or epoch == num_epochs) and criterion.is_classification
         train_loss, train_acc = do_test(model, train_data_obj, criterion, calc_accuracy)
-        test_loss, test_acc = do_test(model, test_data_obj, criterion, calc_accuracy)
+        val_loss, val_acc = do_test(model, val_data_obj, criterion, calc_accuracy)
 
         # Store the losses.
         train_losses[epoch - 1] = train_loss
-        test_losses[epoch - 1] = test_loss
+        val_losses[epoch - 1] = val_loss
         if not calc_accuracy:
             train_acc = train_accuracies[epoch - 2]
-            test_acc = test_accuracies[epoch - 2]
+            val_acc = val_accuracies[epoch - 2]
         train_accuracies[epoch - 1] = train_acc
-        test_accuracies[epoch - 1] = test_acc
-        wandb.log({"train_loss": train_loss, "test_loss": test_loss, "train_acc": train_acc, "test_acc": test_acc})
+        val_accuracies[epoch - 1] = val_acc
+        wandb.log({"train_loss": train_loss, "val_loss": val_loss, "train_acc": train_acc, "val_acc": val_acc})
 
         # Save the best model.
-        if save_best and epoch >= 0.3 * num_epochs and test_loss < best_loss:
+        if save_best and epoch >= 0.3 * num_epochs and val_loss < best_loss:
             torch.save({"epoch": epoch, "model_state_dict": model.state_dict()}, BEST_MODEL_PATH)
-            best_loss = test_loss
+            best_loss = val_loss
 
         # Print the losses every 10 epochs.
         if epoch % 10 == 0 and not suppress_output:
             print(
                 f"Epoch: {epoch:03d}, "
                 f"Train Loss: {sum(train_losses[epoch - 10 : epoch]) / 10:.4f}, "
-                f"Test Loss: {sum(test_losses[epoch - 10 : epoch]) / 10:.4f}, "
+                f"Val Loss: {sum(val_losses[epoch - 10 : epoch]) / 10:.4f}, "
                 f"Train Acc: {train_accuracies[epoch - 1]:.2f}%, "
-                f"Test Acc: {test_accuracies[epoch - 1]:.2f}%, "
+                f"Val Acc: {val_accuracies[epoch - 1]:.2f}%, "
                 f"Avg. duration: {epoch_timer.stop() / 10:.4f} s"
             )
             epoch_timer.start()
@@ -446,9 +453,9 @@ def train(
 
     results = {
         "train_losses": train_losses,
-        "test_losses": test_losses,
+        "val_losses": val_losses,
         "train_accuracies": train_accuracies,
-        "test_accuracies": test_accuracies,
+        "val_accuracies": val_accuracies,
         "duration": duration,
     }
     return results
@@ -457,14 +464,14 @@ def train(
 def plot_training_curves(num_epochs, train_losses, test_losses, train_accuracies, test_accuracies, criterion, title):
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=list(range(1, num_epochs + 1)), y=train_losses, mode="lines", name="Train Loss"))
-    fig.add_trace(go.Scatter(x=list(range(1, num_epochs + 1)), y=test_losses, mode="lines", name="Test Loss"))
-    fig.update_layout(title=f"Training and Test Loss - {title}", xaxis_title="Epoch", yaxis_title=criterion)
+    fig.add_trace(go.Scatter(x=list(range(1, num_epochs + 1)), y=test_losses, mode="lines", name="Val/Test Loss"))
+    fig.update_layout(title=f"Training and Val/Test Loss - {title}", xaxis_title="Epoch", yaxis_title=criterion)
     fig.show()
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=list(range(1, num_epochs + 1)), y=train_accuracies, mode="lines", name="Train Accuracy"))
-    fig.add_trace(go.Scatter(x=list(range(1, num_epochs + 1)), y=test_accuracies, mode="lines", name="Test Accuracy"))
-    fig.update_layout(title=f"Training and Test Accuracy - {title}", xaxis_title="Epoch", yaxis_title="Accuracy (%)")
+    fig.add_trace(go.Scatter(x=list(range(1, num_epochs + 1)), y=test_accuracies, mode="lines", name="Val/Test Accuracy"))
+    fig.update_layout(title=f"Training and Val/Test Accuracy - {title}", xaxis_title="Epoch", yaxis_title="Accuracy (%)")
     fig.show()
 
 
@@ -584,6 +591,8 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         # We are on the HPC - paralel runs use the same disk.
         global BEST_MODEL_PATH
         BEST_MODEL_PATH /= f"{run.id}_{BEST_MODEL_NAME}"
+    else:
+        BEST_MODEL_PATH /= BEST_MODEL_NAME
 
     # Set up the default model configuration.
     model_kwargs = {}
@@ -593,7 +602,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     model_kwargs.update(config.get("model_kwargs", {}))
 
     # Load the dataset.
-    train_data_obj, test_data_obj, dataset_config, features, dataset_props = load_dataset(
+    train_data_obj, val_data_obj, test_data_obj, dataset_config, features, dataset_props = load_dataset(
         selected_features=config.get("selected_features", []),
         batch_size=1.0,
         split=config.get("dataset", {}).get("split", 0.8),
@@ -635,23 +644,23 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         optimizer,
         criterion,
         train_data_obj,
-        test_data_obj,
+        val_data_obj,
         config["epochs"],
         suppress_output=is_sweep,
         save_best=save_best,
     )
     run.summary["best_train_loss"] = min(train_results["train_losses"])
-    run.summary["best_test_loss"] = min(train_results["test_losses"])
+    run.summary["best_val_loss"] = min(train_results["val_losses"])
     run.summary["best_train_accuracy"] = max(train_results["train_accuracies"])
-    run.summary["best_test_accuracy"] = max(train_results["test_accuracies"])
+    run.summary["best_val_accuracy"] = max(train_results["val_accuracies"])
     run.summary["duration"] = train_results["duration"]
     if not is_sweep:
         plot_training_curves(
             config["epochs"],
             train_results["train_losses"],
-            train_results["test_losses"],
+            train_results["val_losses"],
             train_results["train_accuracies"],
-            train_results["test_accuracies"],
+            train_results["val_accuracies"],
             criterion.name,
             config_description(config),
         )
@@ -671,7 +680,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
             epoch,
             criterion,
             train_data_obj,
-            test_data_obj,
+            test_data_obj or val_data_obj,
             plot_graphs,
             make_table,
             suppress_output=is_sweep,
