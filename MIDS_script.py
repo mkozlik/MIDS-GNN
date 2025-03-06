@@ -5,7 +5,6 @@ import inspect
 import pathlib
 import random
 import os
-from collections import Counter
 
 import codetiming
 import numpy as np
@@ -26,6 +25,7 @@ from torch_geometric.nn import (
     GraphSAGE,
     GATConv
 )
+from torch_geometric.nn.resolver import activation_resolver
 
 from my_graphs_dataset import GraphDataset, GraphType
 from MIDS_dataset import MIDSDataset, MIDSProbabilitiesDataset, MIDSLabelsDataset, inspect_dataset
@@ -65,6 +65,8 @@ class GATLinNet(torch.nn.Module):
 
         heads = kwargs.get("heads", 4)
         self.num_layers = num_layers
+        self.act = activation_resolver(kwargs.get("act", "relu"))
+
         self.convs = torch.nn.ModuleList()
         self.lins = torch.nn.ModuleList()
 
@@ -83,7 +85,7 @@ class GATLinNet(torch.nn.Module):
 
     def forward(self, x, edge_index, batch):
         for i in range(self.num_layers - 1):
-            x = F.elu(self.convs[i](x, edge_index) + self.lins[i](x))
+            x = self.act(self.convs[i](x, edge_index) + self.lins[i](x))
         x = self.convs[-1](x, edge_index) + self.lins[-1](x)
         return x
 
@@ -182,14 +184,7 @@ class LossWrapper(torch.nn.Module):
 def load_dataset(selected_features=[], split=0.8, batch_size=1.0, seed=42, suppress_output=False):
     # Set up dataset.
     selected_graph_sizes = {
-        3: -1,
-        4: -1,
-        5: -1,
-        6: -1,
-        7: -1,
-        8: -1,
-        # 9:  10000,
-        # 10: 10000
+        "03-30_mix_1000": -1,
     }
 
     # Load the dataset.
@@ -198,7 +193,7 @@ def load_dataset(selected_features=[], split=0.8, batch_size=1.0, seed=42, suppr
     except NameError:
         root = pathlib.Path().cwd().parents[1] / "Dataset"  # For Jupyter notebook.
     graphs_loader = GraphDataset(selection=selected_graph_sizes, seed=seed)
-    dataset = MIDSLabelsDataset(root, graphs_loader, selected_features=selected_features)
+    dataset = MIDSProbabilitiesDataset(root, graphs_loader, selected_features=selected_features)
 
     # Save dataset configuration.
     dataset_config = {
@@ -577,12 +572,12 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     # Tags for W&B.
     is_sweep = config is None
     wandb_mode = "disabled" if no_wandb else "online"
-    tags = ["test_sweep"]
+    tags = ["probabilities"]
     if is_best_run:
         tags.append("BEST")
 
     # Set up the run
-    run = wandb.init(mode=wandb_mode, project="mids_baselines", tags=tags, config=config)
+    run = wandb.init(mode=wandb_mode, entity="LARICS-GNN", project="MIDS-GNN", tags=tags, config=config)
     config = wandb.config
     if is_sweep:
         print(f"Running sweep with config: {config}...")
@@ -598,6 +593,8 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     model_kwargs = {}
     if config["architecture"] == "GIN":
         model_kwargs = {"train_eps": True}
+    elif config["architecture"] == "GAT":
+        model_kwargs = {"v2": True}
 
     model_kwargs.update(config.get("model_kwargs", {}))
 
@@ -744,14 +741,13 @@ if __name__ == "__main__":
             "architecture": "GATLinNet",
             "hidden_channels": 32,
             "gnn_layers": 3,
-            # "mlp_layers": 2,
             "activation": "tanh",
             "jk": "none",
             "dropout": 0.0,
             ## Training configuration
             "optimizer": "adam",
             "learning_rate": 0.01,
-            "epochs": 1000,
+            "epochs": 2000,
             ## Dataset configuration
             # "selected_features": ["random1"]
         }

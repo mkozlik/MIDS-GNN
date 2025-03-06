@@ -2,8 +2,8 @@
 
 source /home/marko/PROJECTS/graphs_venv/bin/activate
 
-CONFIG_FILE="Config/testing_sweep.yaml"
-PROJECT="mids_baselines"
+CONFIG_FILE="Config/HPC_probabilities_sweep.yaml"
+PROJECT="MIDS-GNN"
 
 # Create the sweep and extract the sweep ID
 SWEEP_ID=$(wandb sweep --project $PROJECT $CONFIG_FILE 2>&1 | tee wandb_sweep.out | grep 'Run' | awk '{print $8}')
