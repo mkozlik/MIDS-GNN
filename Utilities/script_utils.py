@@ -1,3 +1,4 @@
+import torch
 import pandas as pd
 from collections import Counter
 
@@ -28,3 +29,18 @@ def print_dataset_splits(train_dataset, val_dataset, test_dataset):
     lines.insert(5, separator)  # Insert separator after the fourth row
     lines.append(separator)  # Append separator at the end
     print('\n'.join(lines))
+
+
+def print_memory_state():
+    # Get the current GPU memory usage in bytes
+    allocated_memory = torch.cuda.memory_allocated()  # Memory occupied by tensors
+    reserved_memory = torch.cuda.memory_reserved()    # Memory reserved by the allocator
+
+    # Convert bytes to MB
+    allocated_memory_MB = allocated_memory / 1024**2
+    reserved_memory_MB = reserved_memory / 1024**2
+
+    print(f"Allocated GPU Memory: {allocated_memory_MB:.2f} MB")
+    print(f"Reserved GPU Memory: {reserved_memory_MB:.2f} MB")
+    print(torch.cuda.memory_summary(device="cuda"))
+    print()

@@ -29,7 +29,7 @@ from torch_geometric.nn.resolver import activation_resolver
 
 from my_graphs_dataset import GraphDataset, GraphType
 from MIDS_dataset import MIDSDataset, MIDSProbabilitiesDataset, MIDSLabelsDataset, inspect_dataset
-from Utilities.script_utils import print_dataset_splits
+from Utilities.script_utils import print_dataset_splits, print_memory_state
 from Utilities.mids_utils import check_MIDS_batch
 from Utilities.graph_utils import (
     create_graph_wandb,
@@ -251,7 +251,7 @@ def load_dataset(selected_features=[], split=0.8, batch_size=1.0, seed=42, suppr
     else:
         max_dataset_len = max(len(train_dataset), len(val_dataset), len(test_dataset))
         batch_size = int(np.ceil(dataset_config["batch_size"] * max_dataset_len))
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)  # type: ignore
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=16)  # type: ignore
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)  # type: ignore
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)  # type: ignore
 
@@ -601,7 +601,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     # Load the dataset.
     train_data_obj, val_data_obj, test_data_obj, dataset_config, features, dataset_props = load_dataset(
         selected_features=config.get("selected_features", []),
-        batch_size=1.0,
+        batch_size=0.25,
         split=config.get("dataset", {}).get("split", 0.8),
         suppress_output=is_sweep,
     )
@@ -738,7 +738,7 @@ if __name__ == "__main__":
     if args.standalone:
         global_config = {
             ## Model configuration
-            "architecture": "GATLinNet",
+            "architecture": "GCN",
             "hidden_channels": 32,
             "gnn_layers": 3,
             "activation": "tanh",
