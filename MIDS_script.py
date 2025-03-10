@@ -27,7 +27,7 @@ from torch_geometric.nn import (
 )
 from torch_geometric.nn.resolver import activation_resolver
 
-from my_graphs_dataset import GraphDataset, GraphType
+from my_graphs_dataset import GraphDataset
 from MIDS_dataset import MIDSDataset, MIDSProbabilitiesDataset, MIDSLabelsDataset, inspect_dataset
 from Utilities.script_utils import print_dataset_splits, print_memory_state
 from Utilities.mids_utils import check_MIDS_batch
@@ -248,11 +248,11 @@ def load_dataset(selected_features=[], split=0.8, batch_size=1.0, seed=42, suppr
     # Batch and load data.
     if dataset.target_function.__name__ == "true_labels_all_stacked":
         batch_size = 1
-    else:
+    elif isinstance(batch_size, float):
         max_dataset_len = max(len(train_dataset), len(val_dataset), len(test_dataset))
         batch_size = int(np.ceil(dataset_config["batch_size"] * max_dataset_len))
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=16)  # type: ignore
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)  # type: ignore
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True)  # type: ignore
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True)  # type: ignore
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)  # type: ignore
 
     # If the whole dataset fits in memory, we can use the following lines to get a single large batch.
@@ -261,8 +261,8 @@ def load_dataset(selected_features=[], split=0.8, batch_size=1.0, seed=42, suppr
     test_batch = next(iter(test_loader)) if test_size else None
 
     train_data_obj = train_batch if train_size <= batch_size else train_loader
-    val_data_obj = val_batch if val_size <= batch_size else val_loader
-    test_data_obj = test_batch if test_size <= batch_size else test_loader
+    val_data_obj = val_batch if val_size <= batch_size else [val_batch for val_batch in val_loader]
+    test_data_obj = test_batch if test_size <= batch_size else [test_batch for test_batch in val_loader]
 
     if not suppress_output:
         print()
@@ -354,7 +354,7 @@ def do_train(model, data, optimizer, criterion):
     """Train the model on individual batches or the entire dataset."""
     model.train()
 
-    if isinstance(data, DataLoader):
+    if isinstance(data, (DataLoader, list)):
         avg_loss = 0
         for batch in data:  # Iterate in batches over the training dataset.
             avg_loss += training_pass(model, batch, optimizer, criterion)
@@ -371,7 +371,7 @@ def do_test(model, data, criterion, calc_accuracy=False):
     """Test the model on individual batches or the entire dataset."""
     model.eval()
 
-    if isinstance(data, DataLoader):
+    if isinstance(data, (DataLoader, list)):
         correct = 0
         total = 0
         losses = 0
@@ -404,17 +404,25 @@ def train(
     best_loss = float("inf")
     val_loss = 0
 
+    # This is for the hybrid approach described below.
+    train_data = train_data_obj
+
     # Start the training loop with timer.
     training_timer = codetiming.Timer(logger=None)
     epoch_timer = codetiming.Timer(logger=None)
     training_timer.start()
     epoch_timer.start()
     for epoch in range(1, num_epochs + 1):
+        # Hybrid approach for batching:
+        #   run set number of epochs with one permutation and then get new batches from the DataLoader.
+        if (epoch - 1) % 10 == 0 and isinstance(train_data_obj, DataLoader):
+            train_data = [batch for batch in train_data_obj]
+
         # Perform one pass over the training set and then test on both sets.
-        train_loss = do_train(model, train_data_obj, optimizer, criterion)
+        train_loss = do_train(model, train_data, optimizer, criterion)
 
         calc_accuracy = (epoch % 10 == 0 or epoch == num_epochs) and criterion.is_classification
-        train_loss, train_acc = do_test(model, train_data_obj, criterion, calc_accuracy)
+        train_loss, train_acc = do_test(model, train_data, criterion, calc_accuracy)
         val_loss, val_acc = do_test(model, val_data_obj, criterion, calc_accuracy)
 
         # Store the losses.
@@ -602,7 +610,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     train_data_obj, val_data_obj, test_data_obj, dataset_config, features, dataset_props = load_dataset(
         selected_features=config.get("selected_features", []),
         batch_size=0.25,
-        split=config.get("dataset", {}).get("split", 0.8),
+        split=config.get("dataset", {}).get("split", (0.6, 0.2)),
         suppress_output=is_sweep,
     )
 
@@ -741,13 +749,13 @@ if __name__ == "__main__":
             "architecture": "GCN",
             "hidden_channels": 32,
             "gnn_layers": 3,
-            "activation": "tanh",
+            "activation": "relu",
             "jk": "none",
             "dropout": 0.0,
             ## Training configuration
             "optimizer": "adam",
             "learning_rate": 0.01,
-            "epochs": 2000,
+            "epochs": 500,
             ## Dataset configuration
             # "selected_features": ["random1"]
         }
