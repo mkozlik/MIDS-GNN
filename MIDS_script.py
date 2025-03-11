@@ -41,8 +41,13 @@ BEST_MODEL_PATH = pathlib.Path(__file__).parents[0] / "Models"
 BEST_MODEL_PATH.mkdir(exist_ok=True, parents=True)
 BEST_MODEL_NAME = "best_model.pth"
 
-SORT_DATA = False
-
+if "PBS_O_HOME" in os.environ:
+    # We are on the HPC - adjust for the CPU count and VRAM.
+    BATCH_SIZE = 0.5
+    NUM_WORKERS = 16
+else:
+    BATCH_SIZE = 0.25
+    NUM_WORKERS = 8
 
 class EvalType(enum.Enum):
     NONE = 0
@@ -66,6 +71,8 @@ class GATLinNet(torch.nn.Module):
         heads = kwargs.get("heads", 4)
         self.num_layers = num_layers
         self.act = activation_resolver(kwargs.get("act", "relu"))
+        if kwargs.get("jk", "none") != "none":
+            raise ValueError("Jumping knowledge is not supported for this model.")
 
         self.convs = torch.nn.ModuleList()
         self.lins = torch.nn.ModuleList()
@@ -184,7 +191,7 @@ class LossWrapper(torch.nn.Module):
 def load_dataset(selected_features=[], split=0.8, batch_size=1.0, seed=42, suppress_output=False):
     # Set up dataset.
     selected_graph_sizes = {
-        "03-30_mix_1000": -1,
+        "03-25_mix_750": -1,
     }
 
     # Load the dataset.
@@ -251,9 +258,9 @@ def load_dataset(selected_features=[], split=0.8, batch_size=1.0, seed=42, suppr
     elif isinstance(batch_size, float):
         max_dataset_len = max(len(train_dataset), len(val_dataset), len(test_dataset))
         batch_size = int(np.ceil(dataset_config["batch_size"] * max_dataset_len))
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=8, pin_memory=True)  # type: ignore
-    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=8, pin_memory=True)  # type: ignore
-    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)  # type: ignore
+    train_loader = DataLoader(train_dataset, batch_size, shuffle=True, num_workers=NUM_WORKERS, pin_memory=True)  # type: ignore
+    val_loader = DataLoader(val_dataset, batch_size, shuffle=False, num_workers=NUM_WORKERS, pin_memory=True)  # type: ignore
+    test_loader = DataLoader(test_dataset, batch_size, shuffle=False, pin_memory=True)  # type: ignore
 
     # If the whole dataset fits in memory, we can use the following lines to get a single large batch.
     train_batch = next(iter(train_loader))
@@ -485,9 +492,6 @@ def config_description(config):
 
 
 def eval_batch(model, batch, plot_graphs=False):
-    if SORT_DATA:
-        batch = batch.sort(sort_by_row=False)
-
     # Make predictions.
     data = batch.to(device)
     out = model(data.x, data.edge_index, batch=data.batch)
@@ -535,7 +539,7 @@ def evaluate(
 
     # Build a detailed results DataFrame.
     with torch.no_grad():
-        if isinstance(test_data, DataLoader):
+        if isinstance(test_data, (DataLoader, list)):
             for batch in test_data:
                 df = pd.concat([df, eval_batch(model, batch, plot_graphs)])
         elif isinstance(test_data, Data):
@@ -609,7 +613,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     # Load the dataset.
     train_data_obj, val_data_obj, test_data_obj, dataset_config, features, dataset_props = load_dataset(
         selected_features=config.get("selected_features", []),
-        batch_size=0.25,
+        batch_size=BATCH_SIZE,
         split=config.get("dataset", {}).get("split", (0.6, 0.2)),
         suppress_output=is_sweep,
     )
