@@ -322,7 +322,7 @@ def generate_optimizer(model, optimizer, lr, **kwargs):
         raise ValueError("Only Adam optimizer is currently supported.")
 
 
-def training_pass(model, batch, optimizer, criterion):
+def training_pass(model, batch, optimizer, criterion) -> torch.Tensor:
     """Perform a single training pass over the batch."""
     data = batch.to(device)  # Move to CUDA if available.
     optimizer.zero_grad()  # Clear gradients.
@@ -330,7 +330,7 @@ def training_pass(model, batch, optimizer, criterion):
     loss = criterion(out.squeeze(), data.y, data.batch)  # Compute the loss.
     loss.backward()  # Derive gradients.
     optimizer.step()  # Update parameters based on gradients.
-    return loss.item()
+    return loss
 
 
 def testing_pass(model, batch, criterion):
@@ -343,16 +343,16 @@ def testing_pass(model, batch, criterion):
     return loss
 
 
-def testing_pass_batch(model, batch, criterion, accuracy=False):
+def testing_pass_batch(model, batch, criterion, accuracy=False) -> tuple[torch.Tensor, torch.Tensor]:
     with torch.no_grad():
         data = batch.to(device)
         out = model(data.x, data.edge_index, batch=data.batch)
-        loss = criterion(out.squeeze(), data.y, data.batch).item()  # Compute the loss.
-        correct = 0
+        loss = criterion(out.squeeze(), data.y, data.batch)  # Compute the loss.
+        correct = torch.tensor(0, device=device)
         if accuracy:
             pred = torch.where(out.squeeze() > 0, 1.0, 0.0)
             correct = check_MIDS_batch(data, pred)
-            correct = correct.int().sum().item()
+            correct = correct.int().sum()
 
     return loss, correct
 
@@ -362,7 +362,7 @@ def do_train(model, data, optimizer, criterion):
     model.train()
 
     if isinstance(data, (DataLoader, list)):
-        avg_loss = 0
+        avg_loss = torch.tensor(0.0, device=device)
         for batch in data:  # Iterate in batches over the training dataset.
             avg_loss += training_pass(model, batch, optimizer, criterion)
         loss = avg_loss / len(data)
@@ -371,7 +371,7 @@ def do_train(model, data, optimizer, criterion):
     else:
         raise ValueError("Data must be a DataLoader or a Batch object.")
 
-    return loss
+    return loss.item()
 
 
 def do_test(model, data, criterion, calc_accuracy=False):
@@ -379,15 +379,15 @@ def do_test(model, data, criterion, calc_accuracy=False):
     model.eval()
 
     if isinstance(data, (DataLoader, list)):
-        correct = 0
         total = 0
-        losses = 0
+        correct = torch.tensor(0, device=device)
+        avg_loss = torch.tensor(0.0, device=device)
         for batch in data:
             loss, corr = testing_pass_batch(model, batch, criterion, calc_accuracy)
-            losses += loss
+            avg_loss += loss
             correct += corr
             total += len(batch)
-        total_loss = losses / len(data)
+        total_loss = avg_loss / len(data)
         accuracy = correct / total * 100
     elif isinstance(data, Data):
         total_loss, correct = testing_pass_batch(model, data, criterion, calc_accuracy)
@@ -395,7 +395,7 @@ def do_test(model, data, criterion, calc_accuracy=False):
     else:
         raise ValueError("Data must be a DataLoader or a Batch object.")
 
-    return total_loss, accuracy
+    return total_loss.item(), accuracy.item()
 
 
 def train(
