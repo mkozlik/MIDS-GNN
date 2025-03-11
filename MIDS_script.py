@@ -43,7 +43,7 @@ BEST_MODEL_NAME = "best_model.pth"
 
 if "PBS_O_HOME" in os.environ:
     # We are on the HPC - adjust for the CPU count and VRAM.
-    BATCH_SIZE = 0.5
+    BATCH_SIZE = 1/3
     NUM_WORKERS = 16
 else:
     BATCH_SIZE = 0.25
@@ -68,10 +68,10 @@ class GATLinNet(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, num_layers, out_channels=1, **kwargs):
         super().__init__()
 
-        heads = kwargs.get("heads", 4)
+        heads = kwargs.get("heads", 2)
         self.num_layers = num_layers
         self.act = activation_resolver(kwargs.get("act", "relu"))
-        if kwargs.get("jk", "none") != "none":
+        if kwargs.get("jk", None) is not None:
             raise ValueError("Jumping knowledge is not supported for this model.")
 
         self.convs = torch.nn.ModuleList()

@@ -20,9 +20,13 @@ parameters:
   learning_rate:
     values: [0.01, 0.001, 0.0001]
   epochs:
-    value: 2000
+    value: 750
   jk:
     values: [none, cat]
+early_terminate:
+  type: hyperband
+  min_iter: 100
+  eta: 2
 
 command:
   - ${env}
