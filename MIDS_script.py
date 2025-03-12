@@ -491,16 +491,29 @@ def config_description(config):
     return desc.format(**config)
 
 
-def eval_batch(model, batch, plot_graphs=False):
+def eval_batch(model, batch, plot_graphs=False, is_classification=True):
     # Make predictions.
     data = batch.to(device)
-    out = model(data.x, data.edge_index, batch=data.batch)
-    pred = torch.where(out > 0, 1.0, 0.0)
+    pred = model(data.x, data.edge_index, batch=data.batch)
 
     # Unbatch the data.
-    predictions = [d.cpu().squeeze().numpy().astype(np.int32) for d in tg_utils.unbatch(pred, data.batch)]
+    if is_classification:
+        pred = torch.where(pred > 0, 1.0, 0.0)
+        dtype = np.int32
+    else:
+        dtype = float
+
+    def process(x, dtype):
+        r = x.cpu().numpy().T.astype(dtype)
+        if dtype is float:
+            r = np.round(r, 3)
+        axis = 1 if len(r.shape) > 1 else None
+        r = r[~np.any(r == -1, axis=axis), :]
+        return r.tolist()
+
+    predictions = [process(d, dtype) for d in tg_utils.unbatch(pred, data.batch)]
     # TODO: Remove padded values from the ground truth.
-    ground_truth = [d.cpu().numpy().astype(np.int32) for d in tg_utils.unbatch(data.y, data.batch)]
+    ground_truth = [process(d, dtype) for d in tg_utils.unbatch(data.y, data.batch)]
 
     # Extract graphs and create visualizations.
     # TODO: These two lines are very slow.
@@ -541,9 +554,9 @@ def evaluate(
     with torch.no_grad():
         if isinstance(test_data, (DataLoader, list)):
             for batch in test_data:
-                df = pd.concat([df, eval_batch(model, batch, plot_graphs)])
+                df = pd.concat([df, eval_batch(model, batch, plot_graphs, criterion.is_classification)])
         elif isinstance(test_data, Data):
-            df = eval_batch(model, test_data, plot_graphs)
+            df = eval_batch(model, test_data, plot_graphs, criterion.is_classification)
         else:
             raise ValueError("Data must be a DataLoader or a Batch object.")
 
