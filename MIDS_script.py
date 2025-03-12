@@ -29,12 +29,13 @@ from torch_geometric.nn.resolver import activation_resolver
 
 from my_graphs_dataset import GraphDataset
 from MIDS_dataset import MIDSDataset, MIDSProbabilitiesDataset, MIDSLabelsDataset, inspect_dataset
-from Utilities.script_utils import print_dataset_splits, print_memory_state
+from Utilities.script_utils import print_dataset_splits
 from Utilities.mids_utils import check_MIDS_batch
 from Utilities.graph_utils import (
     create_graph_wandb,
     extract_graphs_from_batch,
     graphs_to_tuple,
+    GNNWrapper
 )
 
 BEST_MODEL_PATH = pathlib.Path(__file__).parents[0] / "Models"
@@ -99,19 +100,6 @@ class GATLinNet(torch.nn.Module):
 
 premade_gnns = {x.__name__: x for x in [MLP, GCN, GraphSAGE, GIN, GAT, PNA]}
 custom_gnns = {x.__name__: x for x in [GATLinNet]}
-
-class GNNWrapper(torch.nn.Module):
-    def __init__(self, gnn_model, in_channels, hidden_channels, num_layers, out_channels=1, **kwargs):
-        super().__init__()
-        self.gnn = gnn_model(in_channels=in_channels, hidden_channels=hidden_channels, num_layers=num_layers, out_channels=out_channels, **kwargs)
-        self.is_mlp = isinstance(self.gnn, MLP)
-
-    def forward(self, x, edge_index, batch):
-        if self.is_mlp:
-            x = self.gnn(x=x, batch=batch)
-        else:
-            x = self.gnn(x=x, edge_index=edge_index, batch=batch)
-        return x
 
 
 # ***************************************
@@ -188,11 +176,14 @@ class LossWrapper(torch.nn.Module):
 # ***************************************
 # *************** DATASET ***************
 # ***************************************
-def load_dataset(selected_features=[], split=0.8, batch_size=1.0, seed=42, suppress_output=False):
+def load_dataset(selected_extra_feature=None, split=0.8, batch_size=1.0, seed=42, suppress_output=False):
     # Set up dataset.
     selected_graph_sizes = {
         "03-25_mix_750": -1,
     }
+    # "probabilities" for MIDS probabilities or "labels" for actual MIDS labels.
+    dataset_type = "labels"
+    # dataset_type = "probabilities"
 
     # Load the dataset.
     try:
@@ -200,7 +191,17 @@ def load_dataset(selected_features=[], split=0.8, batch_size=1.0, seed=42, suppr
     except NameError:
         root = pathlib.Path().cwd().parents[1] / "Dataset"  # For Jupyter notebook.
     graphs_loader = GraphDataset(selection=selected_graph_sizes, seed=seed)
-    dataset = MIDSProbabilitiesDataset(root, graphs_loader, selected_features=selected_features)
+
+    if dataset_type == "probabilities":
+        dataset = MIDSProbabilitiesDataset(root, graphs_loader)
+    else:
+        # Training and validation `dataset` can use true, noisy or predicted probabilities as features. It can also use
+        # `None` for end-to-end training without probabilities.
+        dataset = MIDSLabelsDataset(root, graphs_loader, selected_extra_feature=selected_extra_feature)
+        # Testing `dataset` should always use predicted probabilities as features or `None` for end-to-end testing.
+        # In the first case, we simulate two GNNs stacked together. The second case is the same as using one dataset.
+        sef = "predicted_probability" if selected_extra_feature is not None else None
+        evaluation_dataset = MIDSLabelsDataset(root, graphs_loader, selected_extra_feature=sef)
 
     # Save dataset configuration.
     dataset_config = {
@@ -221,16 +222,20 @@ def load_dataset(selected_features=[], split=0.8, batch_size=1.0, seed=42, suppr
     dataset_props["feature_dim"] = dataset.num_features  # type: ignore
 
     dataset_config["num_graphs"] = len(dataset)
-    features = selected_features if selected_features else dataset.features
+    features = dataset.features
 
-    # Shuffle and split the dataset.
+    # Shuffle the dataset.
     # TODO: Splitting after shuffle gives relatively balanced splits between the graph sizes, but it's not perfect.
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    dataset = dataset.shuffle()
-    assert isinstance(dataset, MIDSDataset)  # Shuffle can return a tuple, we need to tell IntelliSense it does not.
+    dataset, perm = dataset.shuffle(return_perm=True)
+    assert isinstance(dataset, MIDSDataset)  # We need to tell IntelliSense dataset is indeed a dataset.
+    if dataset_type == "labels":
+        evaluation_dataset = evaluation_dataset.index_select(perm) # type: ignore
+        assert isinstance(evaluation_dataset, MIDSDataset)
 
+    # Flexible dataset splitting. Can be split to train/test or train/val/test.
     if isinstance(dataset_config["split"], tuple):
         train_size, val_size = dataset_config["split"]
         train_size = round(train_size * len(dataset))
@@ -246,7 +251,10 @@ def load_dataset(selected_features=[], split=0.8, batch_size=1.0, seed=42, suppr
         val_dataset = train_dataset
     val_size = len(val_dataset)
 
-    test_dataset = dataset[train_size + val_size:]
+    if dataset_type == "labels":
+        test_dataset = evaluation_dataset[train_size + val_size:]
+    else:
+        test_dataset = dataset[train_size + val_size:]
     test_size = len(test_dataset)
 
     if not suppress_output:
@@ -269,7 +277,7 @@ def load_dataset(selected_features=[], split=0.8, batch_size=1.0, seed=42, suppr
 
     train_data_obj = train_batch if train_size <= batch_size else train_loader
     val_data_obj = val_batch if val_size <= batch_size else [val_batch for val_batch in val_loader]
-    test_data_obj = test_batch if test_size <= batch_size else [test_batch for test_batch in val_loader]
+    test_data_obj = test_batch if test_size <= batch_size else [test_batch for test_batch in test_loader]
 
     if not suppress_output:
         print()
@@ -512,7 +520,6 @@ def eval_batch(model, batch, plot_graphs=False, is_classification=True):
         return r.tolist()
 
     predictions = [process(d, dtype) for d in tg_utils.unbatch(pred, data.batch)]
-    # TODO: Remove padded values from the ground truth.
     ground_truth = [process(d, dtype) for d in tg_utils.unbatch(data.y, data.batch)]
 
     # Extract graphs and create visualizations.
@@ -625,7 +632,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
 
     # Load the dataset.
     train_data_obj, val_data_obj, test_data_obj, dataset_config, features, dataset_props = load_dataset(
-        selected_features=config.get("selected_features", []),
+        selected_extra_feature=config.get("selected_extra_feature"),
         batch_size=BATCH_SIZE,
         split=config.get("dataset", {}).get("split", (0.6, 0.2)),
         suppress_output=is_sweep,
@@ -714,11 +721,13 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
             run.log({"results_table": eval_results["table"]})
 
         if is_best_run:
-            # Name the model with the current time and date to make it uniq
-            model_name = f"{model.descriptive_name}-{datetime.datetime.now().strftime('%d%m%y_%H%M')}"
+            # Name the model with the current time and date to make it unique.
+            model_name = f"{config_description(config)}-{datetime.datetime.now().strftime('%d%m%y_%H%M')}"
             artifact = wandb.Artifact(name=model_name, type="model")
             artifact.add_file(str(BEST_MODEL_PATH))
             run.log_artifact(artifact)
+            # Save the complete model that can be used in other runs or scripts.
+            torch.save(model, BEST_MODEL_PATH)
 
     if is_sweep:
         print("    ...DONE.")
@@ -774,7 +783,7 @@ if __name__ == "__main__":
             "learning_rate": 0.01,
             "epochs": 500,
             ## Dataset configuration
-            # "selected_features": ["random1"]
+            "selected_extra_feature": None,
         }
         run = main(global_config, eval_type, eval_target, args.no_wandb, args.best)
         run.finish()

@@ -2,6 +2,7 @@ import base64
 import hashlib
 import json
 import random
+import functools
 from pathlib import Path
 
 import codetiming
@@ -9,41 +10,58 @@ import matplotlib
 import networkx as nx
 import numpy as np
 import torch
-import torch_geometric.utils as pygUtils
-import Utilities.mids_utils as mids_utils
+import torch_geometric.utils as tg_utils
+import torch_geometric.transforms as tg_transforms
 import yaml
 from matplotlib import pyplot as plt
 from matplotlib.cm import ScalarMappable
 from matplotlib.colors import Normalize
+from torch_geometric.data import InMemoryDataset, Data
+
+import Utilities.mids_utils as mids_utils
+from Utilities.graph_utils import GNNWrapper
 from my_graphs_dataset import GraphDataset
-from torch.nn import functional as F
-from torch_geometric.data import InMemoryDataset
-from torch_geometric.nn import GATConv
 
 
-class Net(torch.nn.Module):
-    def __init__(self, hidden_channels=256):
-        super().__init__()
-        self.conv1 = GATConv(8, hidden_channels, heads=4)
-        self.lin1 = torch.nn.Linear(8, 4 * hidden_channels)
-        self.conv2 = GATConv(4 * hidden_channels, hidden_channels, heads=4)
-        self.lin2 = torch.nn.Linear(4 * hidden_channels, 4 * hidden_channels)
-        self.conv3 = GATConv(4 * hidden_channels, hidden_channels, heads=4)
-        self.lin3 = torch.nn.Linear(4 * hidden_channels, 4 * hidden_channels)
-        self.conv5 = GATConv(4 * hidden_channels, hidden_channels, heads=4)
-        self.lin5 = torch.nn.Linear(4 * hidden_channels, 4 * hidden_channels)
-        self.conv4 = GATConv(4 * hidden_channels, 1, heads=6, concat=False)
-        self.lin4 = torch.nn.Linear(4 * hidden_channels, 1)
+BEST_MODEL_PATH = Path(__file__).parents[0] / "Models"
 
-    def forward(self, x, edge_index):
-        x = x.to(device="cuda:0")
-        edge_index = edge_index.to(device="cuda:0")
-        x = F.elu(self.conv1(x, edge_index) + self.lin1(x))
-        x = F.elu(self.conv2(x, edge_index) + self.lin2(x))
-        x = F.elu(self.conv3(x, edge_index) + self.lin3(x))
-        # x = F.elu(self.conv5(x, edge_index) + self.lin5(x))
-        x = self.conv4(x, edge_index) + self.lin4(x)
-        return x.squeeze()
+
+class FeatureFilterTransform(tg_transforms.BaseTransform):
+    """
+    A transform that filters features of a graph's node attributes based on a given mask.
+
+    Args:
+        feature_index_mask (list or np.ndarray): A boolean mask or list of indices to filter the features.
+    Methods:
+        forward(data: Data) -> Data:
+            Applies the feature filter to the node attributes of the input data object.
+        __repr__() -> str:
+            Returns a string representation of the transform with the mask.
+    Example:
+        >>> transform = FeatureFilterTransform([0, 2, 4])
+        >>> data = Data(x=torch.tensor([[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]]))
+        >>> transformed_data = transform(data)
+        >>> print(transformed_data.x)
+        tensor([[ 1,  3,  5],
+                [ 6,  8, 10]])
+    """
+    # NOTE: This is a better way than doing self._data.x = self._data.x[:, mask]
+    # See https://github.com/pyg-team/pytorch_geometric/discussions/7684.
+    # This transform function will be automatically applied to each data object
+    # when it is accessed. It might be a bit slower, but tensor slicing
+    # shouldn't affect the performance too much. It is also following the
+    # intended Dataset design.
+    def __init__(self, feature_index_mask):
+        self.mask = feature_index_mask
+
+    def forward(self, data: Data) -> Data:
+        if self.mask is not None:
+            assert data.x is not None
+            data.x = data.x[:, self.mask]
+        return data
+
+    def __repr__(self) -> str:
+        return f'{self.__class__.__name__}({self.mask})'
 
 
 class MIDSDataset(InMemoryDataset):
@@ -60,8 +78,15 @@ class MIDSDataset(InMemoryDataset):
 
         self.load(self.processed_paths[0])
 
-        if selected_features := kwargs.get("selected_features"):
-            self.filter_features(selected_features)
+        selected_features = kwargs.get("selected_features")
+        selected_extra_feature = kwargs.get("selected_extra_feature")
+        mask = self.get_features_mask(selected_features, selected_extra_feature)
+
+        feature_filter = FeatureFilterTransform(mask)
+        if self.transform is not None:
+            self.transform = tg_transforms.Compose([self.transform, feature_filter])
+        else:
+            self.transform = feature_filter
 
     @property
     def raw_dir(self):
@@ -144,6 +169,7 @@ class MIDSDataset(InMemoryDataset):
         probs = MIDSDataset.true_probabilities(G)
         for i, node in enumerate(G.nodes()):
             features[node] = probs[i].item()
+        return features
 
     @staticmethod
     def noisy_mids_probabilities(G):
@@ -151,13 +177,16 @@ class MIDSDataset(InMemoryDataset):
         probs = MIDSDataset.true_probabilities(G)
         for i, node in enumerate(G.nodes()):
             features[node] = max(0, min(1, probs[i].item() + random.uniform(-0.3, 0.3)))
+        return features
 
     @staticmethod
     def predicted_mids_probabilities(G, torch_G, model):
+        features = {}
+        torch_G = torch_G.to(device="cuda")
         prob = model(torch_G.x, torch_G.edge_index).detach().to(device="cpu")
         for i, node in enumerate(G.nodes()):
-            G.nodes[node]["predicted_probability"] = prob[i].item()
-        return G
+            features[node] = prob[i].item()
+        return features
 
     # ************************
 
@@ -203,25 +232,30 @@ class MIDSDataset(InMemoryDataset):
     # This should be overridden in the subclass.
     # ******************************************
     feature_functions = {}
+    extra_feature_functions = {}
     target_function = empty_function
-    probability_predictor = Net()
 
     def make_data(self, G):
         """Create a PyG data object from a graph object."""
         # Compute and add features to the nodes in the graph.
         for feature in self.feature_functions:
-            if feature == "predicted_probability":
-                continue
             feature_val = self.feature_functions[feature](G)
             for node in G.nodes():
                 G.nodes[node][feature] = feature_val[node]
 
-        initial_features = set(self.features) - {"predicted_probability"}
-        torch_G = pygUtils.from_networkx(G, group_node_attrs=list(initial_features))
+        torch_G = tg_utils.from_networkx(G, group_node_attrs=self.features)
 
-        if "predicted_probability" in self.feature_functions:
-            G = self.predicted_mids_probabilities(G, torch_G, self.probability_predictor)
-            torch_G = pygUtils.from_networkx(G, group_node_attrs=self.features)
+        # Extra probability features.
+        for feature in self.extra_feature_functions:
+            if feature == "predicted_probability":
+                feature_val = self.extra_feature_functions[feature](G, torch_G, self.probability_predictor)
+            else:
+                feature_val = self.extra_feature_functions[feature](G)
+            for node in G.nodes():
+                G.nodes[node][feature] = feature_val[node]
+
+        if self.extra_feature_functions:
+            torch_G = tg_utils.from_networkx(G, group_node_attrs=self.features + self.extra_features)
 
         torch_G.y = self.target_function(G)
 
@@ -231,16 +265,31 @@ class MIDSDataset(InMemoryDataset):
     def features(self):
         return list(self.feature_functions.keys())
 
-    def filter_features(self, selected_features):
+    @property
+    def extra_features(self):
+        return list(self.extra_feature_functions.keys())
+
+    @functools.cached_property
+    def feature_dims(self):
+        feature_dims = {}
+        G = tg_utils.to_networkx(self[0], to_undirected=True)
+        for feature in self.feature_functions:
+            feature_val = self.feature_functions[feature](G)
+            try:
+                feature_dims[feature] = len(feature_val[0])
+            except TypeError:
+                feature_dims[feature] = 1
+        return feature_dims
+
+    def get_features_mask(self, selected_features, selected_extra_feature):
         """Filter out features that are not in the selected features."""
-        mask = np.array([name in selected_features for name in self.features])
-        # FIXME: This is not a proper way, but I don't know what else to do.
-        # https://github.com/pyg-team/pytorch_geometric/discussions/7684
-        # This works only because it is applied to the whole dataset, and before
-        # the split. After splitting, `data` and `_data` still hold references
-        # to the whole dataset, so we can't modify only one part.
-        assert self._data is not None
-        self._data.x = self._data.x[:, mask]
+        flags = []
+        for feature in self.features:
+            val = selected_features is None or feature in selected_features
+            flags.extend([val] * self.feature_dims[feature])
+        for feature in self.extra_features:
+            flags.append(feature == selected_extra_feature)
+        return np.array(flags)
 
     @staticmethod
     def get_labels(mids, num_nodes):
@@ -252,7 +301,7 @@ class MIDSDataset(InMemoryDataset):
 
     @staticmethod
     def visualize_data(data):
-        G = pygUtils.to_networkx(data, to_undirected=True)
+        G = tg_utils.to_networkx(data, to_undirected=True)
         nx.draw(
             G,
             with_labels=True,
@@ -276,7 +325,7 @@ class MIDSProbabilitiesDataset(MIDSDataset):
         # node features
         "degree": lambda g: {n: float(g.degree(n)) for n in g.nodes()},
         "degree_centrality": nx.degree_centrality,
-        "random": lambda g: nx.random_layout(g, seed=np.random),
+        "random": lambda g: nx.random_layout(g, seed=np.random), # TODO: check
         "avg_neighbor_degree": nx.average_neighbor_degree,
         "closeness_centrality": nx.closeness_centrality,
         # graph features
@@ -289,10 +338,10 @@ class MIDSProbabilitiesDataset(MIDSDataset):
 
 class MIDSLabelsDataset(MIDSDataset):
     def __init__(self, root, loader: GraphDataset, transform=None, pre_transform=None, pre_filter=None, **kwargs):
+        self.probability_predictor = torch.load(BEST_MODEL_PATH / 'prob_model.pth')
+        self.probability_predictor.eval()
         super().__init__(root, loader, transform, pre_transform, pre_filter, **kwargs)
 
-    # probability_predictor = torch.load('/home/jovyan/models/3-30_probability.pth')
-    probability_predictor = Net().to(device="cuda:0")
 
     feature_functions = {
         # node features
@@ -301,13 +350,18 @@ class MIDSLabelsDataset(MIDSDataset):
         "random": lambda g: nx.random_layout(g, seed=np.random),
         "avg_neighbor_degree": nx.average_neighbor_degree,
         "closeness_centrality": nx.closeness_centrality,
-        # "predicted_probability": None,
         # graph features
         "number_of_nodes": lambda g: [nx.number_of_nodes(g)] * nx.number_of_nodes(g),
         "graph_density": lambda g: [nx.density(g)] * nx.number_of_nodes(g),
     }
 
-    target_function = staticmethod(MIDSDataset.true_labels_single)
+    extra_feature_functions = {
+        "predicted_probability": staticmethod(MIDSDataset.predicted_mids_probabilities),
+        "true_probability": staticmethod(MIDSDataset.true_probabilities),
+        "noisy_probability": staticmethod(MIDSDataset.noisy_mids_probabilities),
+    }
+
+    target_function = staticmethod(MIDSDataset.true_labels_all_padded)
 
 
 def inspect_dataset(dataset):
@@ -339,13 +393,16 @@ def inspect_dataset(dataset):
     print()
 
 
-def inspect_graphs(dataset, num_graphs=1):
+def inspect_graphs(dataset, graphs:int | list=1):
     try:
         y_name = dataset.target_function(None)
     except AttributeError:
         y_name = "Target value"
 
-    for i in random.sample(range(len(dataset)), num_graphs):
+    if isinstance(graphs, int):
+        graphs = random.sample(range(len(dataset)), graphs)
+
+    for i in graphs:
         data = dataset[i]  # Get a random graph object
 
         print()
@@ -371,29 +428,15 @@ def inspect_graphs(dataset, num_graphs=1):
 def main():
     root = Path(__file__).parent / "Dataset"
     selected_graph_sizes = {
-        3: -1,
-        # 4: -1,
-        # 5: -1,
-        # 6: -1,
-        # 7: -1,
-        # 8: -1,
-        # 9:  10000,
-        # 10: 10000,
-        # 11: 10000,
-        # 12: 10000,
-        # 13: 10000,
-        # 14: 10000,
-        # 15: 10000,
-        # 20: 5000,
-        # 30: 5000,
+        "03-30_mix_1000": 5,
     }
     loader = GraphDataset(selection=selected_graph_sizes)
 
     with codetiming.Timer():
-        dataset = MIDSLabelsDataset(root, loader)
+        dataset = MIDSLabelsDataset(root, loader, selected_extra_feature="true_probability")
 
     inspect_dataset(dataset)
-    inspect_graphs(dataset, num_graphs=2)
+    inspect_graphs(dataset, graphs=[0, 1])
 
 
 if __name__ == "__main__":
