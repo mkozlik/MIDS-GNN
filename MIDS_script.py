@@ -44,7 +44,7 @@ BEST_MODEL_NAME = "best_model.pth"
 if "PBS_O_HOME" in os.environ:
     # We are on the HPC - adjust for the CPU count and VRAM.
     BATCH_SIZE = 1/3
-    NUM_WORKERS = 16
+    NUM_WORKERS = 8
 else:
     BATCH_SIZE = 0.25
     NUM_WORKERS = 8
