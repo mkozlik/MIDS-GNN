@@ -2,7 +2,7 @@
 #PBS -q gpu
 #PBS -o /lustre/home/mkrizman/MIDS-GNN/HPC/jobs/output/
 #PBS -e /lustre/home/mkrizman/MIDS-GNN/HPC/jobs/error/
-#PBS -l select=1:ncpus=32:ngpus=1:mem=16GB
+#PBS -l select=1:ncpus=16:ngpus=1:mem=16GB
 
 export http_proxy="http://10.150.1.1:3128"
 export https_proxy="http://10.150.1.1:3128"

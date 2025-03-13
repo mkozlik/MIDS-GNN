@@ -4,8 +4,8 @@ import torch
 from Utilities.gnn_models import GNNWrapper, custom_gnns, premade_gnns
 
 
-LOAD_MODEL_PATH = Path(__file__).parents[0] / "Models" / "9quhiglo_best_model.pth"
-SAVE_MODEL_PATH = Path(__file__).parents[0] / "Models" / "prob1_model.pth"
+LOAD_MODEL_PATH = Path(__file__).parents[0] / "Models" / "best_model.pth"
+SAVE_MODEL_PATH = Path(__file__).parents[0] / "Models" / "prob_model.pth"
 
 
 def generate_model(architecture, in_channels, hidden_channels, num_layers, out_channels=1, **kwargs):
@@ -30,9 +30,9 @@ def generate_model(architecture, in_channels, hidden_channels, num_layers, out_c
 if __name__ == "__main__":
     config = {
         ## Model configuration
-        "architecture": "GATLinNet",
-        "hidden_channels": 64,
-        "gnn_layers": 5,
+        "architecture": "GraphSAGE",
+        "hidden_channels": 32,
+        "gnn_layers": 3,
         "activation": "relu",
         "jk": "none",
         "dropout": 0.0,

@@ -28,6 +28,12 @@ from Utilities.graph_utils import (
 )
 from Utilities.gnn_models import GNNWrapper, custom_gnns, premade_gnns
 
+
+pd.set_option('display.max_rows', 20)
+pd.set_option('display.max_columns', 500)
+pd.set_option('display.width', 1000)
+
+
 BEST_MODEL_PATH = pathlib.Path(__file__).parents[0] / "Models"
 BEST_MODEL_PATH.mkdir(exist_ok=True, parents=True)
 BEST_MODEL_NAME = "best_model.pth"
@@ -132,8 +138,8 @@ def load_dataset(selected_extra_feature=None, split=0.8, batch_size=1.0, seed=42
         "03-25_mix_750": -1,
     }
     # "probabilities" for MIDS probabilities or "labels" for actual MIDS labels.
-    dataset_type = "labels"
-    # dataset_type = "probabilities"
+    # dataset_type = "labels"
+    dataset_type = "probabilities"
 
     # Load the dataset.
     try:
@@ -465,8 +471,9 @@ def eval_batch(model, batch, plot_graphs=False, is_classification=True):
         r = x.cpu().numpy().T.astype(dtype)
         if dtype is float:
             r = np.round(r, 3)
-        axis = 1 if len(r.shape) > 1 else None
-        r = r[~np.any(r == -1, axis=axis), :]
+        else:
+            axis = 1 if len(r.shape) > 1 else None
+            r = r[~np.any(r == -1, axis=axis), :]
         return r.tolist()
 
     predictions = [process(d, dtype) for d in tg_utils.unbatch(pred, data.batch)]
@@ -520,15 +527,29 @@ def evaluate(
     # Create a W&B table.
     table = wandb.Table(dataframe=df) if make_table else None
 
-    # Print and plot.
+    # Analyze the results.
+    if not criterion.is_classification:
+        # Calculate differences and statistics
+        errors = np.concatenate(
+            [(np.array(row["Predicted"]) - np.array(row["True"])).squeeze() for _, row in df.iterrows()]
+        )
 
+        avg_error = np.mean(errors)
+        avg_abs_error = np.mean(np.abs(errors))
+        std_error = np.std(errors)
+
+    # Print and plot.
     if not suppress_output:
         print(f"Evaluating model at epoch {epoch}.\n")
         print(
-            f"Train loss: {train_loss:.8f}\n"
+            f"Train loss: {train_loss:.8f} (averaged over batches)\n"
             f"Test loss : {test_loss:.8f}\n"
             f"Train accuracy: {train_acc:.2f}%\n"
             f"Test accuracy : {test_acc:.2f}%\n"
+            f"\n"
+            f"Mean error     : {avg_error:.4f} (all examples)\n"
+            f"Mean abs. error: {avg_abs_error:.4f}\n"
+            f"Std. dev. error: {std_error:.4f}\n"
         )
         df = df.sort_values(by="Nodes")
         print("\nDetailed results:")
@@ -539,6 +560,9 @@ def evaluate(
         "loss": test_loss,
         "accuracy": test_acc,
         "table": table,
+        "mean_err": avg_error,
+        "mean_abs_err": avg_abs_error,
+        "std_err": std_error,
     }
     return results
 
@@ -613,7 +637,6 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     criterion = LossWrapper(criterion_options[dataset_config["target"]]())
 
     wandb.watch(model, criterion, log="all", log_freq=100)
-    # torchexplorer.watch(model, backend="wandb")
 
     # Run training.
     print("Training...")
@@ -666,6 +689,9 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         )
         run.summary["eval_loss"] = eval_results["loss"]
         run.summary["eval_accuracy"] = eval_results["accuracy"]
+        run.summary["mean_error"] = eval_results["mean_err"]
+        run.summary["mean_abs_error"] = eval_results["mean_abs_err"]
+        run.summary["std_error"] = eval_results["std_err"]
 
         if eval_type.value > EvalType.BASIC.value:
             run.log({"results_table": eval_results["table"]})
