@@ -26,7 +26,7 @@ from Utilities.graph_utils import (
     extract_graphs_from_batch,
     graphs_to_tuple,
 )
-from Utilities.gnn_models import GNNWrapper, custom_gnns, premade_gnns
+from Utilities.gnn_models import GNNWrapper, custom_gnns, premade_gnns, GATLinNet
 
 
 pd.set_option('display.max_rows', 20)

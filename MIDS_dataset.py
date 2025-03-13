@@ -19,7 +19,7 @@ from matplotlib.colors import Normalize
 from torch_geometric.data import InMemoryDataset, Data
 
 import Utilities.mids_utils as mids_utils
-from Utilities.gnn_models import GNNWrapper
+from Utilities.gnn_models import GNNWrapper, GATLinNet
 from my_graphs_dataset import GraphDataset
 
 
@@ -396,7 +396,7 @@ def inspect_dataset(dataset):
 
 def inspect_graphs(dataset, graphs:int | list=1):
     try:
-        y_name = dataset.target_function(None)
+        y_name = dataset.target_function.__name__
     except AttributeError:
         y_name = "Target value"
 
@@ -429,9 +429,9 @@ def inspect_graphs(dataset, graphs:int | list=1):
 def main():
     root = Path(__file__).parent / "Dataset"
     selected_graph_sizes = {
-        "03-30_mix_1000": 5,
+        "03-25_mix_750": -1,
     }
-    loader = GraphDataset(selection=selected_graph_sizes)
+    loader = GraphDataset(selection=selected_graph_sizes, seed=42)
 
     with codetiming.Timer():
         dataset = MIDSLabelsDataset(root, loader, selected_extra_feature="noisy_probability")
