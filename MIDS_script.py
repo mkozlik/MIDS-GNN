@@ -34,6 +34,7 @@ pd.set_option('display.max_columns', 500)
 pd.set_option('display.width', 1000)
 
 
+# GLOBAL VARIABLES
 BEST_MODEL_PATH = pathlib.Path(__file__).parents[0] / "Models"
 BEST_MODEL_PATH.mkdir(exist_ok=True, parents=True)
 BEST_MODEL_NAME = "best_model.pth"
@@ -45,6 +46,8 @@ if "PBS_O_HOME" in os.environ:
 else:
     BATCH_SIZE = 0.25
     NUM_WORKERS = 8
+
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
 class EvalType(enum.Enum):
     NONE = 0
@@ -138,8 +141,8 @@ def load_dataset(selected_extra_feature=None, split=0.8, batch_size=1.0, seed=42
         "03-25_mix_750": -1,
     }
     # "probabilities" for MIDS probabilities or "labels" for actual MIDS labels.
-    dataset_type = "labels"
-    # dataset_type = "probabilities"
+    # dataset_type = "labels"
+    dataset_type = "probabilities"
 
     # Load the dataset.
     try:
@@ -743,8 +746,6 @@ if __name__ == "__main__":
     eval_type = EvalType[args.eval_type.upper()] if args.eval_type else EvalType.NONE
     eval_target = EvalTarget[args.eval_target.upper()]
 
-    # Get available device.
-    device = "cuda" if torch.cuda.is_available() else "cpu"
     print(f"Loaded torch. Using *{device}* device.")
 
     if args.standalone:
