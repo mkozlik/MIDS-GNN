@@ -16,16 +16,6 @@ import torch_geometric.utils as tg_utils
 import wandb
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import (
-    GAT,
-    GCN,
-    GIN,
-    MLP,
-    PNA,
-    GraphSAGE,
-    GATConv
-)
-from torch_geometric.nn.resolver import activation_resolver
 
 from my_graphs_dataset import GraphDataset
 from MIDS_dataset import MIDSDataset, MIDSProbabilitiesDataset, MIDSLabelsDataset, inspect_dataset
@@ -35,8 +25,8 @@ from Utilities.graph_utils import (
     create_graph_wandb,
     extract_graphs_from_batch,
     graphs_to_tuple,
-    GNNWrapper
 )
+from Utilities.gnn_models import GNNWrapper, custom_gnns, premade_gnns
 
 BEST_MODEL_PATH = pathlib.Path(__file__).parents[0] / "Models"
 BEST_MODEL_PATH.mkdir(exist_ok=True, parents=True)
@@ -60,46 +50,6 @@ class EvalType(enum.Enum):
 class EvalTarget(enum.Enum):
     LAST = "last"
     BEST = "best"
-
-
-# ***************************************
-# *************** MODELS ****************
-# ***************************************
-class GATLinNet(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels, num_layers, out_channels=1, **kwargs):
-        super().__init__()
-
-        heads = kwargs.get("heads", 2)
-        self.num_layers = num_layers
-        self.act = activation_resolver(kwargs.get("act", "relu"))
-        if kwargs.get("jk", None) is not None:
-            raise ValueError("Jumping knowledge is not supported for this model.")
-
-        self.convs = torch.nn.ModuleList()
-        self.lins = torch.nn.ModuleList()
-
-        if num_layers > 1:
-            self.convs.append(GATConv(in_channels, hidden_channels, heads=heads))
-            self.lins.append(torch.nn.Linear(in_channels, heads * hidden_channels))
-            in_channels = heads * hidden_channels
-
-        for _ in range(num_layers - 2):
-            self.convs.append(GATConv(in_channels, hidden_channels, heads=heads))
-            self.lins.append(torch.nn.Linear(in_channels, heads * hidden_channels))
-            in_channels = heads * hidden_channels
-
-        self.convs.append(GATConv(in_channels, out_channels, heads=heads, concat=False))
-        self.lins.append(torch.nn.Linear(in_channels, out_channels))
-
-    def forward(self, x, edge_index, batch):
-        for i in range(self.num_layers - 1):
-            x = self.act(self.convs[i](x, edge_index) + self.lins[i](x))
-        x = self.convs[-1](x, edge_index) + self.lins[-1](x)
-        return x
-
-
-premade_gnns = {x.__name__: x for x in [MLP, GCN, GraphSAGE, GIN, GAT, PNA]}
-custom_gnns = {x.__name__: x for x in [GATLinNet]}
 
 
 # ***************************************
@@ -727,6 +677,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
             artifact.add_file(str(BEST_MODEL_PATH))
             run.log_artifact(artifact)
             # Save the complete model that can be used in other runs or scripts.
+            wandb.unwatch()
             torch.save(model, BEST_MODEL_PATH)
 
     if is_sweep:

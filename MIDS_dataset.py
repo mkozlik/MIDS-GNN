@@ -19,7 +19,7 @@ from matplotlib.colors import Normalize
 from torch_geometric.data import InMemoryDataset, Data
 
 import Utilities.mids_utils as mids_utils
-from Utilities.graph_utils import GNNWrapper
+from Utilities.gnn_models import GNNWrapper
 from my_graphs_dataset import GraphDataset
 
 
@@ -338,7 +338,8 @@ class MIDSProbabilitiesDataset(MIDSDataset):
 
 class MIDSLabelsDataset(MIDSDataset):
     def __init__(self, root, loader: GraphDataset, transform=None, pre_transform=None, pre_filter=None, **kwargs):
-        self.probability_predictor = torch.load(BEST_MODEL_PATH / 'prob_model.pth')
+        self.probability_predictor = torch.load(BEST_MODEL_PATH / 'prob_model_trained.pth')
+        self.probability_predictor.to(device="cuda")
         self.probability_predictor.eval()
         super().__init__(root, loader, transform, pre_transform, pre_filter, **kwargs)
 

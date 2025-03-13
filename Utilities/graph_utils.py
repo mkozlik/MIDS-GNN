@@ -4,24 +4,8 @@ from typing import Any, Callable, Dict, List, Tuple, Union
 
 import networkx as nx
 import plotly.graph_objects as go
-import torch
 import torch_geometric.utils as pygUtils
 import wandb
-from torch_geometric.nn import MLP
-
-
-class GNNWrapper(torch.nn.Module):
-    def __init__(self, gnn_model, in_channels, hidden_channels, num_layers, out_channels=1, **kwargs):
-        super().__init__()
-        self.gnn = gnn_model(in_channels=in_channels, hidden_channels=hidden_channels, num_layers=num_layers, out_channels=out_channels, **kwargs)
-        self.is_mlp = isinstance(self.gnn, MLP)
-
-    def forward(self, x, edge_index, batch=None):
-        if self.is_mlp:
-            x = self.gnn(x=x, batch=batch)
-        else:
-            x = self.gnn(x=x, edge_index=edge_index, batch=batch)
-        return x
 
 
 def extract_graphs_from_batch(data):
