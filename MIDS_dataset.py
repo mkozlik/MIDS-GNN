@@ -176,7 +176,7 @@ class MIDSDataset(InMemoryDataset):
         features = {}
         probs = MIDSDataset.true_probabilities(G)
         for i, node in enumerate(G.nodes()):
-            features[node] = max(0, min(1, probs[i].item() + random.uniform(-0.3, 0.3)))
+            features[node] = max(0, min(1, probs[i].item() + random.gauss(-0.0152, 0.1360)))
         return features
 
     @staticmethod
@@ -434,7 +434,7 @@ def main():
     loader = GraphDataset(selection=selected_graph_sizes)
 
     with codetiming.Timer():
-        dataset = MIDSLabelsDataset(root, loader, selected_extra_feature="true_probability")
+        dataset = MIDSLabelsDataset(root, loader, selected_extra_feature="noisy_probability")
 
     inspect_dataset(dataset)
     inspect_graphs(dataset, graphs=[0, 1])

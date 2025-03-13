@@ -138,8 +138,8 @@ def load_dataset(selected_extra_feature=None, split=0.8, batch_size=1.0, seed=42
         "03-25_mix_750": -1,
     }
     # "probabilities" for MIDS probabilities or "labels" for actual MIDS labels.
-    # dataset_type = "labels"
-    dataset_type = "probabilities"
+    dataset_type = "labels"
+    # dataset_type = "probabilities"
 
     # Load the dataset.
     try:
@@ -528,6 +528,7 @@ def evaluate(
     table = wandb.Table(dataframe=df) if make_table else None
 
     # Analyze the results.
+    avg_error = avg_abs_error = std_error = np.nan
     if not criterion.is_classification:
         # Calculate differences and statistics
         errors = np.concatenate(
