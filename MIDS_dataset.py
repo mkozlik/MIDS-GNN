@@ -82,11 +82,13 @@ class MIDSDataset(InMemoryDataset):
         selected_extra_feature = kwargs.get("selected_extra_feature")
         mask = self.get_features_mask(selected_features, selected_extra_feature)
 
-        feature_filter = FeatureFilterTransform(mask)
-        if self.transform is not None:
-            self.transform = tg_transforms.Compose([self.transform, feature_filter])
-        else:
-            self.transform = feature_filter
+        # Add a feature filter transform to the transform pipeline, if needed.
+        if not np.all(mask):
+            feature_filter = FeatureFilterTransform(mask)
+            if self.transform is not None:
+                self.transform = tg_transforms.Compose([self.transform, feature_filter])
+            else:
+                self.transform = feature_filter
 
     @property
     def raw_dir(self):
@@ -288,7 +290,8 @@ class MIDSDataset(InMemoryDataset):
             val = selected_features is None or feature in selected_features
             flags.extend([val] * self.feature_dims[feature])
         for feature in self.extra_features:
-            flags.append(feature == selected_extra_feature)
+            val = selected_extra_feature is None or feature == selected_extra_feature
+            flags.append(val)
         return np.array(flags)
 
     @staticmethod
@@ -426,6 +429,32 @@ def inspect_graphs(dataset, graphs:int | list=1):
         # MIDSDataset.visualize_data(data)
 
 
+def make_dataframe(dataset):
+    import pandas as pd
+    from Utilities.graph_utils import graphs_to_tuple
+
+    nx_graphs = nx_graphs = [tg_utils.to_networkx(d, to_undirected=True) for d in dataset]
+    graphs, node_nums, edge_nums = zip(*graphs_to_tuple(nx_graphs))
+
+    ground_truth = [np.round(data.x.numpy(), 3)[:, 9] for data in dataset]
+    predictions = [np.round(data.x.numpy(), 3)[:, 8] for data in dataset]
+
+    df = pd.DataFrame(
+        {
+            "Graph": graphs,
+            "Nodes": node_nums,
+            "Edges": edge_nums,
+            "True": ground_truth,
+            "Predicted": predictions,
+        }
+    )
+
+    df = df.sort_values(by="Nodes")
+    print("\nDetailed results:")
+    print("==================")
+    print(df.head(10))
+
+
 def main():
     root = Path(__file__).parent / "Dataset"
     selected_graph_sizes = {
@@ -434,7 +463,7 @@ def main():
     loader = GraphDataset(selection=selected_graph_sizes, seed=42)
 
     with codetiming.Timer():
-        dataset = MIDSLabelsDataset(root, loader, selected_extra_feature="noisy_probability")
+        dataset = MIDSLabelsDataset(root, loader, selected_extra_feature=None)
 
     inspect_dataset(dataset)
     inspect_graphs(dataset, graphs=[0, 1])

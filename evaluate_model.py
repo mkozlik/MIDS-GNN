@@ -1,12 +1,14 @@
-from MIDS_script import load_dataset, evaluate, MinBCEWithLogitsLoss, CustomLossFunction, LossWrapper
-import pathlib
-import torch
 import os
+import pathlib
 
+import torch
+
+from MIDS_script import CustomLossFunction, LossWrapper, MinBCEWithLogitsLoss, evaluate, load_dataset
+from Utilities.gnn_models import GATLinNet, GNNWrapper
 
 if "PBS_O_HOME" in os.environ:
     # We are on the HPC - adjust for the CPU count and VRAM.
-    BATCH_SIZE = 1/3
+    BATCH_SIZE = 1
 else:
     BATCH_SIZE = 0.25
 
@@ -20,7 +22,7 @@ def main(config):
 
     if "PBS_O_HOME" in os.environ:
         # We are on the HPC - paralel runs use the same disk.
-        BEST_MODEL_PATH = ""
+        BEST_MODEL_PATH = "/lustre/home/mkrizman/MIDS-GNN/Models/prob_model_trained.pth"
     else:
         BEST_MODEL_PATH = "/home/marko/PROJECTS/MIDS-GNN/Models/prob_model_trained.pth"
 
@@ -43,6 +45,8 @@ def main(config):
     model = torch.load(BEST_MODEL_PATH)
     model.to(device="cuda")
 
+    skip_training_data = next(iter(train_data_obj))[0]
+
     # Run evaluation.
     print("\nEvaluation results:")
     print("===================")
@@ -51,7 +55,20 @@ def main(config):
         0,
         criterion,
         train_data_obj,
-        test_data_obj or val_data_obj,
+        val_data_obj,
+        plot_graphs,
+        make_table,
+        suppress_output=False,
+    )
+
+    print("\nEvaluation results:")
+    print("===================")
+    eval_results = evaluate(
+        model,
+        0,
+        criterion,
+        skip_training_data,
+        test_data_obj,
         plot_graphs,
         make_table,
         suppress_output=False,
@@ -61,7 +78,7 @@ def main(config):
 if __name__ == "__main__":
 
     config = {
-        "selected_extra_feature": None,
+        "selected_extra_feature": "",
     }
 
     main(config=config)

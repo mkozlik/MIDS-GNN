@@ -225,9 +225,9 @@ def load_dataset(selected_extra_feature=None, split=0.8, batch_size=1.0, seed=42
     elif isinstance(batch_size, float):
         max_dataset_len = max(len(train_dataset), len(val_dataset), len(test_dataset))
         batch_size = int(np.ceil(dataset_config["batch_size"] * max_dataset_len))
-    train_loader = DataLoader(train_dataset, batch_size, shuffle=True, num_workers=NUM_WORKERS, pin_memory=True)  # type: ignore
-    val_loader = DataLoader(val_dataset, batch_size, shuffle=False, num_workers=NUM_WORKERS, pin_memory=True)  # type: ignore
-    test_loader = DataLoader(test_dataset, batch_size, shuffle=False, pin_memory=True)  # type: ignore
+    train_loader = DataLoader(train_dataset, batch_size, shuffle=True, num_workers=NUM_WORKERS)  # type: ignore
+    val_loader = DataLoader(val_dataset, batch_size, shuffle=False, num_workers=NUM_WORKERS)  # type: ignore
+    test_loader = DataLoader(test_dataset, batch_size, shuffle=False)  # type: ignore
 
     # If the whole dataset fits in memory, we can use the following lines to get a single large batch.
     train_batch = next(iter(train_loader))
@@ -558,7 +558,7 @@ def evaluate(
         df = df.sort_values(by="Nodes")
         print("\nDetailed results:")
         print("==================")
-        print(df)
+        print(df.head(10))
 
     results = {
         "loss": test_loss,
