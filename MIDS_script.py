@@ -336,7 +336,7 @@ def do_train(model, data, optimizer, criterion):
     elif isinstance(data, Data):
         loss = training_pass(model, data, optimizer, criterion)
     else:
-        raise ValueError("Data must be a DataLoader or a Batch object.")
+        raise ValueError(f"Data must be a DataLoader or a Batch object, but got: {type(data)}.")
 
     return loss.item()
 
@@ -360,7 +360,7 @@ def do_test(model, data, criterion, calc_accuracy=False):
         total_loss, correct = testing_pass_batch(model, data, criterion, calc_accuracy)
         accuracy = correct / len(data) * 100
     else:
-        raise ValueError("Data must be a DataLoader or a Batch object.")
+        raise ValueError(f"Data must be a DataLoader or a Batch object, but got: {type(data)}.")
 
     return total_loss.item(), accuracy.item()
 
@@ -525,7 +525,7 @@ def evaluate(
         elif isinstance(test_data, Data):
             df = eval_batch(model, test_data, plot_graphs, criterion.is_classification)
         else:
-            raise ValueError("Data must be a DataLoader or a Batch object.")
+            raise ValueError(f"Data must be a DataLoader or a Batch object, but got: {type(test_data)}.")
 
     # Create a W&B table.
     table = wandb.Table(dataframe=df) if make_table else None

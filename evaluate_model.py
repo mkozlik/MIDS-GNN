@@ -1,5 +1,5 @@
 import os
-import pathlib
+
 
 import torch
 
@@ -8,7 +8,7 @@ from Utilities.gnn_models import GATLinNet, GNNWrapper
 
 if "PBS_O_HOME" in os.environ:
     # We are on the HPC - adjust for the CPU count and VRAM.
-    BATCH_SIZE = 1
+    BATCH_SIZE = 1/3
 else:
     BATCH_SIZE = 0.25
 
@@ -45,8 +45,6 @@ def main(config):
     model = torch.load(BEST_MODEL_PATH)
     model.to(device="cuda")
 
-    skip_training_data = next(iter(train_data_obj))[0]
-
     # Run evaluation.
     print("\nEvaluation results:")
     print("===================")
@@ -67,7 +65,7 @@ def main(config):
         model,
         0,
         criterion,
-        skip_training_data,
+        train_data_obj,
         test_data_obj,
         plot_graphs,
         make_table,

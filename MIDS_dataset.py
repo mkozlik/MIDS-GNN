@@ -328,7 +328,7 @@ class MIDSProbabilitiesDataset(MIDSDataset):
         # node features
         "degree": lambda g: {n: float(g.degree(n)) for n in g.nodes()},
         "degree_centrality": nx.degree_centrality,
-        "random": lambda g: nx.random_layout(g, seed=np.random), # TODO: check
+        "random": lambda g: nx.random_layout(g, seed=np.random), # This works because GraphDataset loader sets the seed
         "avg_neighbor_degree": nx.average_neighbor_degree,
         "closeness_centrality": nx.closeness_centrality,
         # graph features
