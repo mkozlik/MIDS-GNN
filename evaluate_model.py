@@ -22,7 +22,7 @@ def main(config):
 
     if "PBS_O_HOME" in os.environ:
         # We are on the HPC - paralel runs use the same disk.
-        BEST_MODEL_PATH = "/lustre/home/mkrizman/MIDS-GNN/Models/prob_model_trained.pth"
+        BEST_MODEL_PATH = "/lustre/home/mkrizman/MIDS-GNN/Models/prob_model_best.pth"
     else:
         BEST_MODEL_PATH = "/home/marko/PROJECTS/MIDS-GNN/Models/prob_model_trained.pth"
 

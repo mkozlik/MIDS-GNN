@@ -141,8 +141,8 @@ def load_dataset(selected_extra_feature=None, split=0.8, batch_size=1.0, seed=42
         "03-25_mix_750": -1,
     }
     # "probabilities" for MIDS probabilities or "labels" for actual MIDS labels.
-    # dataset_type = "labels"
-    dataset_type = "probabilities"
+    dataset_type = "labels"
+    # dataset_type = "probabilities"
 
     # Load the dataset.
     try:
@@ -159,7 +159,7 @@ def load_dataset(selected_extra_feature=None, split=0.8, batch_size=1.0, seed=42
         dataset = MIDSLabelsDataset(root, graphs_loader, selected_extra_feature=selected_extra_feature)
         # Testing `dataset` should always use predicted probabilities as features or `None` for end-to-end testing.
         # In the first case, we simulate two GNNs stacked together. The second case is the same as using one dataset.
-        sef = "predicted_probability" if selected_extra_feature is not None else None
+        sef = "predicted_probability" if selected_extra_feature != "" else ""
         evaluation_dataset = MIDSLabelsDataset(root, graphs_loader, selected_extra_feature=sef)
 
     # Save dataset configuration.
@@ -407,7 +407,7 @@ def train(
             val_acc = val_accuracies[epoch - 2]
         train_accuracies[epoch - 1] = train_acc
         val_accuracies[epoch - 1] = val_acc
-        wandb.log({"train_loss": train_loss, "val_loss": val_loss, "train_acc": train_acc, "val_acc": val_acc})
+        # wandb.log({"train_loss": train_loss, "val_loss": val_loss, "train_acc": train_acc, "val_acc": val_acc})
 
         # Save the best model.
         if save_best and epoch >= 0.3 * num_epochs and val_loss < best_loss:
@@ -415,16 +415,31 @@ def train(
             best_loss = val_loss
 
         # Print the losses every 10 epochs.
-        if epoch % 10 == 0 and not suppress_output:
-            print(
-                f"Epoch: {epoch:03d}, "
-                f"Train Loss: {sum(train_losses[epoch - 10 : epoch]) / 10:.4f}, "
-                f"Val Loss: {sum(val_losses[epoch - 10 : epoch]) / 10:.4f}, "
-                f"Train Acc: {train_accuracies[epoch - 1]:.2f}%, "
-                f"Val Acc: {val_accuracies[epoch - 1]:.2f}%, "
-                f"Avg. duration: {epoch_timer.stop() / 10:.4f} s"
+        if epoch % 10 == 0:
+            avg_train_loss = sum(train_losses[epoch - 10 : epoch]) / 10
+            avg_val_loss = sum(val_losses[epoch - 10 : epoch]) / 10
+            avg_train_acc = train_accuracies[epoch - 1]
+            avg_val_acc = val_accuracies[epoch - 1]
+            wandb.log(
+                {
+                    "train_loss": avg_train_loss,
+                    "val_loss": avg_val_loss,
+                    "train_acc": avg_train_acc,
+                    "val_acc": avg_val_acc,
+                },
+                step=epoch,
             )
-            epoch_timer.start()
+
+            if not suppress_output:
+                print(
+                    f"Epoch: {epoch:03d}, "
+                    f"Train Loss: {avg_train_loss:.4f}, "
+                    f"Val Loss: {avg_val_loss:.4f}, "
+                    f"Train Acc: {avg_train_acc:.2f}%, "
+                    f"Val Acc: {avg_val_acc:.2f}%, "
+                    f"Avg. duration: {epoch_timer.stop() / 10:.4f} s"
+                )
+                epoch_timer.start()
     epoch_timer.stop()
     duration = training_timer.stop()
 
@@ -582,7 +597,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     # Tags for W&B.
     is_sweep = config is None
     wandb_mode = "disabled" if no_wandb else "online"
-    tags = ["probabilities"]
+    tags = ["multi_labels"]
     if is_best_run:
         tags.append("BEST")
 
@@ -751,16 +766,16 @@ if __name__ == "__main__":
     if args.standalone:
         global_config = {
             ## Model configuration
-            "architecture": "GCN",
-            "hidden_channels": 32,
-            "gnn_layers": 3,
+            "architecture": "GATLinNet",
+            "hidden_channels": 64,
+            "gnn_layers": 5,
             "activation": "relu",
             "jk": "none",
             "dropout": 0.0,
             ## Training configuration
             "optimizer": "adam",
             "learning_rate": 0.01,
-            "epochs": 500,
+            "epochs": 750,
             ## Dataset configuration
             "selected_extra_feature": None,
         }

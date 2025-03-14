@@ -178,7 +178,7 @@ class MIDSDataset(InMemoryDataset):
         features = {}
         probs = MIDSDataset.true_probabilities(G)
         for i, node in enumerate(G.nodes()):
-            features[node] = max(0, min(1, probs[i].item() + random.gauss(-0.0152, 0.1360)))
+            features[node] = max(0, min(1, probs[i].item() + random.gauss(-0.0150, 0.1375)))
         return features
 
     @staticmethod
@@ -341,7 +341,7 @@ class MIDSProbabilitiesDataset(MIDSDataset):
 
 class MIDSLabelsDataset(MIDSDataset):
     def __init__(self, root, loader: GraphDataset, transform=None, pre_transform=None, pre_filter=None, **kwargs):
-        self.probability_predictor = torch.load(BEST_MODEL_PATH / 'prob_model_trained.pth')
+        self.probability_predictor = torch.load(BEST_MODEL_PATH / 'prob_model_best.pth')
         self.probability_predictor.to(device="cuda")
         self.probability_predictor.eval()
         super().__init__(root, loader, transform, pre_transform, pre_filter, **kwargs)
