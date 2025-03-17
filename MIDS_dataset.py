@@ -344,6 +344,11 @@ class MIDSLabelsDataset(MIDSDataset):
         self.probability_predictor = torch.load(BEST_MODEL_PATH / 'prob_model_best.pth')
         self.probability_predictor.to(device="cuda")
         self.probability_predictor.eval()
+
+        self.source_dataset = kwargs.get("source_dataset")
+        if override_target := kwargs.get("override_target_function"):
+            self.target_function = override_target
+
         super().__init__(root, loader, transform, pre_transform, pre_filter, **kwargs)
 
 
@@ -366,6 +371,43 @@ class MIDSLabelsDataset(MIDSDataset):
     }
 
     target_function = staticmethod(MIDSDataset.true_labels_all_padded)
+
+
+    def process(self):
+        if self.source_dataset is None:
+            super().process()
+        else:
+            self.copy_process()
+
+    def copy_process(self):
+        """A private process override used for converting between lables for single and mulitple solutions."""
+        assert self.source_dataset is not None
+
+        data_list = []
+
+        for data in self.source_dataset:
+            if self.source_dataset.target_function == MIDSDataset.true_labels_all_padded and self.target_function == MIDSDataset.true_labels_single:
+                data_list.append(self.filter_single_solution(data))
+            else:
+                raise NotImplementedError("Any conversion between labels other than multi->single is not implemented.")
+
+        if self.pre_filter is not None:
+            data_list = [data for data in data_list if self.pre_filter(data)]
+
+        if self.pre_transform is not None:
+            data_list = [self.pre_transform(data) for data in data_list]
+
+        # data, slices = self.collate(data_list)
+        self.save(data_list, self.processed_paths[0])
+
+    @staticmethod
+    def filter_single_solution(data):
+        # Invalid, padded solutions all contain -1 values in the column. We want to select a random valid solution.
+        valid_solutions = data.y[0, :] != -1
+        valid_solutions = data.y[:, valid_solutions]
+        selected_solution = valid_solutions[:, random.randrange(0, valid_solutions.shape[1])]
+        data.y = selected_solution
+        return data
 
 
 def inspect_dataset(dataset):
@@ -464,9 +506,16 @@ def main():
 
     with codetiming.Timer():
         dataset = MIDSLabelsDataset(root, loader, selected_extra_feature=None)
+        new_dataset = MIDSLabelsDataset(root, loader, selected_extra_feature=None, override_target_function=MIDSDataset.true_labels_single, source_dataset=dataset)
+        loaded_dataset = MIDSLabelsDataset(root, loader, selected_extra_feature=None, override_target_function=MIDSDataset.true_labels_single)
+
 
     inspect_dataset(dataset)
     inspect_graphs(dataset, graphs=[0, 1])
+
+    inspect_graphs(new_dataset, graphs=[0, 1])
+
+    inspect_graphs(loaded_dataset, graphs=[0, 1])
 
 
 if __name__ == "__main__":
