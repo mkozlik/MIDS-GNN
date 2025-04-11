@@ -26,7 +26,7 @@ from Utilities.graph_utils import (
     extract_graphs_from_batch,
     graphs_to_tuple,
 )
-from Utilities.gnn_models import GNNWrapper, custom_gnns, premade_gnns, GATLinNet
+from Utilities.gnn_models import GNNWrapper, GATLinNet, CombinedGNN, custom_gnns, premade_gnns
 
 
 pd.set_option('display.max_rows', 20)
@@ -271,9 +271,11 @@ def generate_model(architecture, in_channels, hidden_channels, num_layers, out_c
             out_channels=out_channels ,
             **kwargs,
         )
-    else:
+    elif architecture in custom_gnns:
         MyGNN = custom_gnns[architecture]
         model = MyGNN(in_channels, hidden_channels, num_layers, out_channels=1, **kwargs)
+    else:
+        model = CombinedGNN(architecture, in_channels, num_layers, out_channels=1, **kwargs)
 
     model = model.to(device)
     return model
@@ -597,7 +599,7 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     # Tags for W&B.
     is_sweep = config is None
     wandb_mode = "disabled" if no_wandb else "online"
-    tags = ["multi_labels"]
+    tags = ["end_to_end"]
     if is_best_run:
         tags.append("BEST")
 
@@ -766,18 +768,18 @@ if __name__ == "__main__":
     if args.standalone:
         global_config = {
             ## Model configuration
-            "architecture": "GATLinNet",
-            "hidden_channels": 64,
+            "architecture": "GAT+GAT",
+            "hidden_channels": 0,
             "gnn_layers": 5,
-            "activation": "relu",
-            "jk": "none",
+            "activation": "N/A",
+            "jk": "cat",
             "dropout": 0.0,
             ## Training configuration
             "optimizer": "adam",
             "learning_rate": 0.01,
             "epochs": 750,
             ## Dataset configuration
-            "selected_extra_feature": None,
+            "selected_extra_feature": "",
         }
         run = main(global_config, eval_type, eval_target, args.no_wandb, args.best)
         run.finish()

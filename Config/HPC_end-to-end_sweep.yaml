@@ -1,30 +1,30 @@
 program: /lustre/home/mkrizman/MIDS-GNN/MIDS_script.py
-name: HPC_labels_single
+name: HPC_end_to_end
 method: grid  # Bayesian works for small number of continuous parameters.
 metric:
   goal: minimize
   name: val_loss
 parameters:
   architecture:
-    values: [MLP, GCN, GraphSAGE, GIN, GAT, GATLinNet]
+    values: [GATLinNet+MLP, GATLinNet+GCN, GATLinNet+GraphSAGE, GATLinNet+GIN, GATLinNet+GAT, GATLinNet+GATLinNet, MLP+MLP, GCN+GCN, GIN+GIN, GAT+GAT, GraphSAGE+GraphSAGE]
   hidden_channels:
-    values: [16, 32, 64, 128]
+    value: 0
   gnn_layers:
-    values: [2, 3, 5]
+    value: 5
   dropout:
     value: 0.0
   activation:
-    values: [relu, tanh, elu]
+    value: N/A
   optimizer:
     value: adam
   learning_rate:
     values: [0.01, 0.001, 0.0001]
   epochs:
-    value: 750
+    values: [750, 1500]
   jk:
-    values: [none, cat]
+    value: cat
   selected_extra_feature:
-    values: ["", predicted_probability, true_probability, noisy_probability]
+    value: ""
 
 early_terminate:
   type: hyperband
@@ -39,5 +39,3 @@ command:
   - "basic"
   - "--eval-target"
   - "best"
-
-
