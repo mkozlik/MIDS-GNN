@@ -184,8 +184,9 @@ class MIDSDataset(InMemoryDataset):
     @staticmethod
     def predicted_mids_probabilities(G, torch_G, model):
         features = {}
-        torch_G = torch_G.to(device="cuda")
-        prob = model(torch_G.x, torch_G.edge_index).detach().to(device="cpu")
+        # torch_G = torch_G.to(device="cuda")
+        with torch.no_grad():
+            prob = model(torch_G.x, torch_G.edge_index)#.detach()#.to(device="cpu")
         for i, node in enumerate(G.nodes()):
             features[node] = prob[i].item()
         return features
@@ -342,7 +343,7 @@ class MIDSProbabilitiesDataset(MIDSDataset):
 class MIDSLabelsDataset(MIDSDataset):
     def __init__(self, root, loader: GraphDataset, transform=None, pre_transform=None, pre_filter=None, **kwargs):
         self.probability_predictor = torch.load(BEST_MODEL_PATH / 'prob_model_best.pth')
-        self.probability_predictor.to(device="cuda")
+        self.probability_predictor.to(device="cpu")
         self.probability_predictor.eval()
 
         self.source_dataset = kwargs.get("source_dataset")
@@ -471,13 +472,15 @@ def inspect_graphs(dataset, graphs:int | list=1):
         # MIDSDataset.visualize_data(data)
 
 
-def make_dataframe(dataset):
+def analyze_labels_dataset(dataset):
     import pandas as pd
     from Utilities.graph_utils import graphs_to_tuple
 
+    # Take individual graphs and store their properties in a DataFrame.
     nx_graphs = nx_graphs = [tg_utils.to_networkx(d, to_undirected=True) for d in dataset]
     graphs, node_nums, edge_nums = zip(*graphs_to_tuple(nx_graphs))
 
+    # Extract the ground truth and predicted values from the dataset.
     ground_truth = [np.round(data.x.numpy(), 3)[:, 9] for data in dataset]
     predictions = [np.round(data.x.numpy(), 3)[:, 8] for data in dataset]
 
@@ -496,26 +499,39 @@ def make_dataframe(dataset):
     print("==================")
     print(df.head(10))
 
+    # Calculate the average error and standard deviation over all nodes.
+    errors = np.concatenate(
+        [(np.array(row["Predicted"]) - np.array(row["True"])).squeeze() for _, row in df.iterrows()]
+    )
+
+    print("\nStatistics over all nodes:")
+    print("===========================")
+    print(f"Average error: {np.mean(errors):.3f}\n"
+          f"Average absolute error: {np.mean(np.abs(errors)):.3f}\n"
+          f"Standard deviation: {np.std(errors):.3f}")
+
 
 def main():
     root = Path(__file__).parent / "Dataset"
     selected_graph_sizes = {
-        "03-25_mix_750": -1,
+        "26-50_mix_100": -1,
+        # "03-25_mix_750": -1,
     }
     loader = GraphDataset(selection=selected_graph_sizes, seed=42)
 
     with codetiming.Timer():
         dataset = MIDSLabelsDataset(root, loader, selected_extra_feature=None)
-        new_dataset = MIDSLabelsDataset(root, loader, selected_extra_feature=None, override_target_function=MIDSDataset.true_labels_single, source_dataset=dataset)
-        loaded_dataset = MIDSLabelsDataset(root, loader, selected_extra_feature=None, override_target_function=MIDSDataset.true_labels_single)
+        # new_dataset = MIDSLabelsDataset(root, loader, selected_extra_feature=None, override_target_function=MIDSDataset.true_labels_single, source_dataset=dataset)
+        # loaded_dataset = MIDSLabelsDataset(root, loader, selected_extra_feature=None, override_target_function=MIDSDataset.true_labels_single)
 
 
     inspect_dataset(dataset)
-    inspect_graphs(dataset, graphs=[0, 1])
+    # inspect_graphs(dataset, graphs=[0, 1])
+    analyze_labels_dataset(dataset)
 
-    inspect_graphs(new_dataset, graphs=[0, 1])
+    # inspect_graphs(new_dataset, graphs=[0, 1])
 
-    inspect_graphs(loaded_dataset, graphs=[0, 1])
+    # inspect_graphs(loaded_dataset, graphs=[0, 1])
 
 
 if __name__ == "__main__":
