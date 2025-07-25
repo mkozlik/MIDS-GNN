@@ -2,7 +2,8 @@ import networkx as nx
 import numpy as np
 from matplotlib import colormaps
 from matplotlib import pyplot as plt
-
+import torch
+import torch_geometric.utils as tg_utils
 from my_graphs_dataset import GraphDataset
 
 
@@ -62,6 +63,59 @@ def check_MIDS(A, candidate, target_value):
 
     return True
 
+def check_MIDS_batch(data, pred):
+    """
+    Args:
+        data_batch (DataBatch): A batch of graphs from PyTorch Geometric.
+        candidates (torch.Tensor): Candidate sets for MIDS, a 0-1 tensor indicating nodes in MIDS for each graph.
+
+    Returns:
+        torch.Tensor: A boolean tensor indicating if each candidate set satisfies the MIDS conditions.
+    """
+    ## Step 0: Initialize variables
+    batch_size = data.batch.max().item() + 1
+    node_batch = data.batch
+    row, _ = data.edge_index
+    edge_batch = data.batch[row]
+    target = data.y if data.y.dim() == 1 else data.y[:, 0]
+
+    device = data.y.device
+    dtype = torch.int
+
+    pred = pred.to(torch.int)
+
+    ## Step 1: Check candidate set size condition
+    # Sum up all target values across the batch.
+    # Floating point errors are possible so we round to the nearest integer (diffrence is in the order <1e-3).
+    target_values = torch.zeros(batch_size, dtype=data.y.dtype, device=device).scatter_add_(0, node_batch, target)
+    target_values = torch.round(target_values).to(torch.int)
+
+    mids_sizes = torch.zeros(batch_size, dtype=dtype, device=device).scatter_add_(0, node_batch, pred)
+    size_condition = mids_sizes <= target_values
+
+    ## Step 2: Check if candidate set is dominating
+    # Add self-loops so that each node counts itself as a neighbor.
+    edge_index_with_loops = tg_utils.add_self_loops(data.edge_index, num_nodes=data.num_nodes)[0]
+
+    # Propagate the candidate values to each node’s neighbors.
+    dom_neighbors = torch.zeros(data.num_nodes, dtype=dtype, device=device)
+    dom_neighbors.index_add_(0, edge_index_with_loops[0], pred[edge_index_with_loops[1]])
+    pred_dominance = (dom_neighbors >= 1).to(torch.int)
+
+    # Aggregate per graph to ensure all nodes are dominated
+    domination_per_graph = torch.zeros(batch_size, dtype=dtype, device=device).scatter_add_(0, node_batch, pred_dominance)
+    domination_condition = domination_per_graph == torch.bincount(node_batch, minlength=batch_size)
+
+    ## Step 3: Check independence condition
+    # Mask edges where both nodes are in the candidate set
+    edge_candidates = torch.logical_not(torch.logical_and(pred[data.edge_index[0]], pred[data.edge_index[1]])).to(torch.int)
+    independence_per_graph = torch.zeros(batch_size, dtype=dtype, device=device).scatter_add_(0, edge_batch, edge_candidates)
+    independence_condition = independence_per_graph == torch.bincount(edge_batch, minlength=batch_size)
+
+    # Combine all conditions
+    mids_conditions = size_condition & domination_condition & independence_condition
+
+    return mids_conditions
 
 def disjunction_value(G):
     """Calculate the disjunction value of each node in the graph G."""

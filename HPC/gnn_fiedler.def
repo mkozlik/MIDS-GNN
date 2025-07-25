@@ -1,0 +1,13 @@
+Bootstrap: docker
+From: nvcr.io/nvidia/pyg:24.11-py3
+
+%post
+ pip3 install torch-scatter matplotlib networkx tqdm pyyaml codetiming pandas plotly wandb
+
+%runscript
+ cd $HOME/my_graphs_dataset
+ pip install --root-user-action=ignore -e . --quiet
+
+ pattern=$( echo ${CUDA_VISIBLE_DEVICES} | tr ',' '|' )
+ export CUDA_VISIBLE_DEVICES=$( nvidia-smi -L | egrep "${pattern}" | egrep -o "GPU [0-3]" | egrep -o "[0-3]" | tr "\n" "," | sed 's/,$//' )
+ python $@

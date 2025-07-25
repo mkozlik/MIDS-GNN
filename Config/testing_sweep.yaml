@@ -1,0 +1,36 @@
+program: MIDS_script.py
+name: testing_sweep
+method: grid  # Bayesian works for small number of continuous parameters.
+metric:
+  goal: minimize
+  name: test_loss
+parameters:
+  architecture:
+    values: [MLP, GCN, GraphSAGE, GIN, GAT]
+  hidden_channels:
+    values: [32]
+  gnn_layers:
+    values: [3]
+  dropout:
+    value: 0.0
+  activation:
+    values: [relu]
+  optimizer:
+    value: adam
+  learning_rate:
+    values: [0.01]
+  epochs:
+    value: 1000
+  jk:
+    values: [none]
+
+command:
+  - ${env}
+  - ${interpreter}
+  - ${program}
+  - "--eval-type"
+  - "basic"
+  - "--eval-target"
+  - "best"
+
+
