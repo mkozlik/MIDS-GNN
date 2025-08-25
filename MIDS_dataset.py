@@ -336,6 +336,7 @@ class MIDSProbabilitiesDataset(MIDSDataset):
         "number_of_nodes": lambda g: [nx.number_of_nodes(g)] * nx.number_of_nodes(g),
         "graph_density": lambda g: [nx.density(g)] * nx.number_of_nodes(g),
     }
+    extra_feature_functions = {}
 
     target_function = staticmethod(MIDSDataset.true_probabilities)
 

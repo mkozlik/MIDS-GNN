@@ -58,6 +58,7 @@ class GATLinNet(torch.nn.Module):
 
 
 # TODO: input checking
+# NOTE: hyperparameters are fixed to those found by the non-end-to-end training
 class CombinedGNN(torch.nn.Module):
     def __init__(self, architecture, in_channels, num_layers, out_channels=1, **kwargs):
         super().__init__()
