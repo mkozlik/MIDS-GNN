@@ -129,6 +129,7 @@ class MIDSDataset(InMemoryDataset):
                 self.__class__.__name__,
                 self.loader.hashable_selection,
                 self.features,
+                self.extra_features,
                 self.target_function.__name__,
                 self.loader.seed,
             ]
