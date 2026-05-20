@@ -165,7 +165,9 @@ def load_dataset(selected_extra_feature=None, split=0.8, batch_size=1.0, seed=42
         dataset = MIDSLabelsDataset(root, graphs_loader, selected_extra_feature=selected_extra_feature)
         # Testing `dataset` should always use predicted probabilities as features or `None` for end-to-end testing.
         # In the first case, we simulate two GNNs stacked together. The second case is the same as using one dataset.
-        sef = "predicted_probability" if selected_extra_feature != "" else ""
+        sef = ""
+        if selected_extra_feature is not None or selected_extra_feature != "":
+            sef = "predicted_probability"
         evaluation_dataset = MIDSLabelsDataset(root, graphs_loader, selected_extra_feature=sef)
 
     # Save dataset configuration.
@@ -786,7 +788,7 @@ if __name__ == "__main__":
             ## Training configuration
             "optimizer": "adam",
             "learning_rate": 0.001,
-            "epochs": 750,
+            "epochs": 1000,
             ## Dataset configuration
             "selected_extra_feature": "",
         }

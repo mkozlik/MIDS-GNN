@@ -53,7 +53,7 @@ class GNNWrapper(torch.nn.Module):
     @classmethod
     def load(cls, path):
         map_location = torch.device("cpu") if not torch.cuda.is_available() else None
-        model_dict = torch.load(path, map_location=map_location)
+        model_dict = torch.load(path, map_location=map_location, weights_only=False)
         model = cls(**model_dict["config"])
         model.load_state_dict(model_dict["model"])
         return model

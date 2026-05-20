@@ -45,6 +45,8 @@ Graphs dataset repository: https://github.com/mkrizmancic/my_graphs_dataset
 | `script_utils.py` | General script utilities for dataset splitting and common operations |
 | `setup_environment.sh` | Environment setup script for dependencies and configuration |
 
+## Running the training script
+`python3 MIDS_script.py --standalone --eval-type basic --eval-target best --no-wandb`
 
 ## Replicating the paper results
 
@@ -91,3 +93,71 @@ The `analyze_runtimes.ipynb` notebook generates the results for Table II using t
 
 ## Detailed results (not included in the paper)
 Input the best model W&B run ID and run `analyze_detailed.ipynb`.
+
+
+## Modifying the code for your experiments
+### Model, training and dataset configuration
+Edit `mids_script.py` - lines 779+
+```python
+global_config = {
+    ## Model configuration
+    "architecture": "GraphSAGE",
+    "hidden_channels": 32,
+    "gnn_layers": 5,
+    "activation": "relu",
+    "jk": "cat",
+    "dropout": 0.1,
+    ## Training configuration
+    "optimizer": "adam",
+    "learning_rate": 0.001,
+    "epochs": 1000,
+    ## Dataset configuration
+    "selected_extra_feature": "",
+}
+```
+### Change dataset features
+Currently available and calculated features are listed in `MIDS_dataset.py` - lines 358+.
+```python
+feature_functions = {
+    # node features
+    "degree": lambda g: {n: float(g.degree(n)) for n in g.nodes()},
+    "degree_centrality": nx.degree_centrality,
+    "random": lambda g: nx.random_layout(g, seed=np.random),
+    "avg_neighbor_degree": nx.average_neighbor_degree,
+    "closeness_centrality": nx.closeness_centrality,
+    # graph features
+    "number_of_nodes": lambda g: [nx.number_of_nodes(g)] * nx.number_of_nodes(g),
+    "graph_density": lambda g: [nx.density(g)] * nx.number_of_nodes(g),
+    }
+```
+Either:
+1. List the desired features in the `selected_features` key in the `global_config` dictionary in `mids_script.py`.
+2. Comment out or define new features in the `feature_functions` dictionary in `MIDS_dataset.py`.
+
+### Change the graphs in the dataset
+Modify graph sizes in `mids_script.py` - lines 140+, by commenting out or changing the number of loaded graphs for each size.
+```python
+selected_graph_sizes = {
+    3: -1,
+    4: -1,
+    5: -1,
+    6: -1,
+    7: -1,
+    8: -1,
+}
+```
+
+### Saving and loading models
+The trained model is saved as:
+1. `best_model.pth` - weights only for the known model architecture
+2. `best_model_full.pth` - the full model including architecture and weights,
+
+To load the model:
+1. Set up the same `model` using `generate_model` function in `MIDS_script.py` with the same configuration as the trained model, then use
+```python
+checkpoint = torch.load(BEST_MODEL_PATH, weights_only=False)
+model.load_state_dict(checkpoint["model_state_dict"])
+```
+2. Create the full model as
+```python
+model = GNNWrapper.load(path)

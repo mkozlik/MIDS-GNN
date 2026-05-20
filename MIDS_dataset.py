@@ -344,7 +344,7 @@ class MIDSProbabilitiesDataset(MIDSDataset):
 
 class MIDSLabelsDataset(MIDSDataset):
     def __init__(self, root, loader: GraphDataset, transform=None, pre_transform=None, pre_filter=None, **kwargs):
-        self.probability_predictor = torch.load(BEST_MODEL_PATH / 'prob_model_best.pth')
+        self.probability_predictor = torch.load(BEST_MODEL_PATH / 'prob_model_best.pth', weights_only=False)
         self.probability_predictor.to(device="cpu")
         self.probability_predictor.eval()
 
