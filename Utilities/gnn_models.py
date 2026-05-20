@@ -1,27 +1,62 @@
+import importlib
 import torch
+import torch_geometric.nn as torchg_nn
 from torch_geometric.nn import (
-    GAT,
-    GCN,
-    GIN,
-    MLP,
-    PNA,
-    GraphSAGE,
     GATConv
 )
 from torch_geometric.nn.resolver import activation_resolver
 
 class GNNWrapper(torch.nn.Module):
-    def __init__(self, gnn_model, in_channels, hidden_channels, num_layers, out_channels=1, **kwargs):
+    def __init__(self, architecture, in_channels, hidden_channels, num_layers, out_channels=1, **kwargs):
         super().__init__()
-        self.gnn = gnn_model(in_channels=in_channels, hidden_channels=hidden_channels, num_layers=num_layers, out_channels=out_channels, **kwargs)
-        self.is_mlp = isinstance(self.gnn, MLP)
+
+        # Store args and kwargs used to initialize the model.
+        self.config = {
+            "architecture": architecture,
+            "in_channels": in_channels,
+            "hidden_channels": hidden_channels,
+            "out_channels": out_channels,
+            "num_layers": num_layers,
+        }
+        self.config.update(kwargs)
+
+        # Sanitize and load kwargs.
+        if kwargs.get("jk") == "none":
+            kwargs["jk"] = None
+
+        gnn_model = getattr(importlib.import_module("torch_geometric.nn"), architecture)
+        self.gnn = gnn_model(
+            in_channels=in_channels,
+            hidden_channels=hidden_channels,
+            out_channels=out_channels,
+            num_layers=num_layers,
+            **kwargs,
+        )
+
+        # Store other class variables.
+        self.gnn_is_mlp = architecture == "MLP"
 
     def forward(self, x, edge_index, batch=None):
-        if self.is_mlp:
+        if self.gnn_is_mlp:
             x = self.gnn(x=x, batch=batch)
         else:
             x = self.gnn(x=x, edge_index=edge_index, batch=batch)
         return x
+
+    def save(self, path):
+        model_dict = {
+            "config": self.config,
+            "model": self.state_dict(),
+        }
+        torch.save(model_dict, path)
+
+    @classmethod
+    def load(cls, path):
+        map_location = torch.device("cpu") if not torch.cuda.is_available() else None
+        model_dict = torch.load(path, map_location=map_location, weights_only=False)
+        model = cls(**model_dict["config"])
+        model.load_state_dict(model_dict["model"])
+        return model
 
 
 class GATLinNet(torch.nn.Module):
@@ -117,12 +152,12 @@ class CombinedGNN(torch.nn.Module):
         if arch1 == "GATLinNet":
             self.gnn1 = GATLinNet(in_channels, hidden_channels[0], num_layers, 9, **kwargs1)
         else:
-            self.gnn1 = GNNWrapper(premade_gnns[arch1], in_channels, hidden_channels[0], num_layers, 9, **kwargs1)
+            self.gnn1 = GNNWrapper(arch1, in_channels, hidden_channels[0], num_layers, 9, **kwargs1)
 
         if arch2 == "GATLinNet":
             self.gnn2 = GATLinNet(9, hidden_channels[1], num_layers, out_channels, **kwargs2)
         else:
-            self.gnn2 = GNNWrapper(premade_gnns[arch2], 9, hidden_channels[1], num_layers, out_channels, **kwargs2)
+            self.gnn2 = GNNWrapper(arch2, 9, hidden_channels[1], num_layers, out_channels, **kwargs2)
 
 
     def forward(self, x, edge_index, batch=None):
@@ -130,5 +165,5 @@ class CombinedGNN(torch.nn.Module):
         x = self.gnn2(x, edge_index, batch)
         return x
 
-premade_gnns = {x.__name__: x for x in [MLP, GCN, GraphSAGE, GIN, GAT, PNA]}
+premade_gnns = torchg_nn.models.classes
 custom_gnns = {x.__name__: x for x in [GATLinNet]}

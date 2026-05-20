@@ -42,7 +42,7 @@ def main(config):
     }
     criterion = LossWrapper(criterion_options[dataset_config["target"]]())
 
-    model = torch.load(BEST_MODEL_PATH)
+    model = torch.load(BEST_MODEL_PATH, weights_only=False)
     model.to(device="cuda")
 
     # Run evaluation.

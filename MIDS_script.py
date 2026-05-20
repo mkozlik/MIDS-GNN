@@ -10,6 +10,7 @@ import codetiming
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
+import plotly.io as pio
 import torch
 import torch.nn.functional as F
 import torch_geometric.utils as tg_utils
@@ -138,7 +139,12 @@ class LossWrapper(torch.nn.Module):
 def load_dataset(selected_extra_feature=None, split=0.8, batch_size=1.0, seed=42, suppress_output=False):
     # Set up dataset.
     selected_graph_sizes = {
-        "03-25_mix_750": -1,
+        3: -1,
+        4: -1,
+        5: -1,
+        6: -1,
+        7: -1,
+        8: -1,
     }
     # "probabilities" for MIDS probabilities or "labels" for actual MIDS labels.
     dataset_type = "labels"
@@ -159,7 +165,9 @@ def load_dataset(selected_extra_feature=None, split=0.8, batch_size=1.0, seed=42
         dataset = MIDSLabelsDataset(root, graphs_loader, selected_extra_feature=selected_extra_feature)
         # Testing `dataset` should always use predicted probabilities as features or `None` for end-to-end testing.
         # In the first case, we simulate two GNNs stacked together. The second case is the same as using one dataset.
-        sef = "predicted_probability" if selected_extra_feature != "" else ""
+        sef = ""
+        if selected_extra_feature is not None or selected_extra_feature != "":
+            sef = "predicted_probability"
         evaluation_dataset = MIDSLabelsDataset(root, graphs_loader, selected_extra_feature=sef)
 
     # Save dataset configuration.
@@ -264,7 +272,7 @@ def generate_model(architecture, in_channels, hidden_channels, num_layers, out_c
     # GLOBALS: device, premade_gnns, custom_gnns
     if architecture in premade_gnns:
         model = GNNWrapper(
-            gnn_model=premade_gnns[architecture],
+            architecture=architecture,
             in_channels=in_channels,
             hidden_channels=hidden_channels,
             num_layers=num_layers,
@@ -276,8 +284,6 @@ def generate_model(architecture, in_channels, hidden_channels, num_layers, out_c
         model = MyGNN(in_channels, hidden_channels, num_layers, out_channels=1, **kwargs)
     else:
         model = CombinedGNN(architecture, in_channels, num_layers, out_channels=1, **kwargs)
-
-    model = model.to(device)
     return model
 
 
@@ -616,14 +622,13 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
     else:
         BEST_MODEL_PATH /= BEST_MODEL_NAME
 
-    # Set up the default model configuration.
-    model_kwargs = {}
-    if config["architecture"] == "GIN":
-        model_kwargs = {"train_eps": True}
-    elif config["architecture"] == "GAT":
-        model_kwargs = {"v2": True}
+    # Set up model configuration.
+    model_kwargs = config.get("model_kwargs", {})
 
-    model_kwargs.update(config.get("model_kwargs", {}))
+    if config["architecture"] == "GIN":
+        model_kwargs.update({"train_eps": True})
+    elif config["architecture"] == "GAT":
+        model_kwargs.update({"v2": True})
 
     # Load the dataset.
     train_data_obj, val_data_obj, test_data_obj, dataset_config, features, dataset_props = load_dataset(
@@ -644,10 +649,11 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
         config["hidden_channels"],
         config["gnn_layers"],
         act=config["activation"],
-        dropout=float(config["dropout"]),
-        jk=config["jk"] if config["jk"] != "none" else None,
+        dropout=float(config.get("dropout", 0.0)),
+        jk=config.get("jk"),
         **model_kwargs,
     )
+    model = model.to(device)
     optimizer = generate_optimizer(model, config["optimizer"], config["learning_rate"])
     criterion_options = {
         "true_labels_all_padded": MinBCEWithLogitsLoss,
@@ -727,6 +733,9 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
             wandb.unwatch()
             torch.save(model, BEST_MODEL_PATH)
 
+        if not is_sweep and hasattr(model, "save"):
+            model.save(BEST_MODEL_PATH.parent / pathlib.Path(BEST_MODEL_PATH.stem + "_full.pth"))
+
     if is_sweep:
         print("    ...DONE.")
         if eval_type != EvalType.NONE:
@@ -737,6 +746,8 @@ def main(config=None, eval_type=EvalType.NONE, eval_target=EvalTarget.LAST, no_w
 
 
 if __name__ == "__main__":
+    pio.renderers.default = "browser"
+
     args = argparse.ArgumentParser(description="Train a GNN model to predict the algebraic connectivity of graphs.")
     args.add_argument("--standalone", action="store_true", help="Run the script as a standalone.")
     # These are the options for model performance evaluation.
@@ -768,16 +779,16 @@ if __name__ == "__main__":
     if args.standalone:
         global_config = {
             ## Model configuration
-            "architecture": "GAT+GAT",
-            "hidden_channels": 0,
+            "architecture": "GraphSAGE",
+            "hidden_channels": 32,
             "gnn_layers": 5,
-            "activation": "N/A",
+            "activation": "relu",
             "jk": "cat",
-            "dropout": 0.0,
+            "dropout": 0.1,
             ## Training configuration
             "optimizer": "adam",
-            "learning_rate": 0.01,
-            "epochs": 750,
+            "learning_rate": 0.001,
+            "epochs": 1000,
             ## Dataset configuration
             "selected_extra_feature": "",
         }
